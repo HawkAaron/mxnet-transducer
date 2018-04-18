@@ -249,7 +249,9 @@ class RNNTLossOp : public Operator {
     // allocate temporary workspace
     size_t size_bytes;
     bool gpu = data.kDevCPU ? false : true;
-    get_workspace_size<real_t>(label_lengths, data_lengths, alphabet_size,
+    int maxT = static_cast<int>(data.size(1));
+    int maxU = static_cast<int>(data.size(2));
+    get_workspace_size<real_t>(maxT, maxU, alphabet_size,
                                batch_size, gpu, &size_bytes);
 
     // round-up so there are enough elems in memory
