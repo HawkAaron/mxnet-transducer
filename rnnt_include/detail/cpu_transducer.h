@@ -8,11 +8,13 @@
 
 #include <dmlc/omp.h>
 
-inline float neg_inf() { return -std::numeric_limits<float>::infinity(); }
+template<typename T>
+inline T neg_inf() { return -std::numeric_limits<T>::infinity(); }
 
-inline float log_sum_exp(float a, float b) {
-    if (!isfinite(a)) return b;
-    if (!isfinite(b)) return a;
+template<typename T>
+inline T log_sum_exp(T a, T b) {
+    if (a == neg_inf<T>()) return b;
+    if (b == neg_inf<T>()) return a;
     if (a > b)
         return log1p(exp(b-a)) + a;
     else
@@ -20,8 +22,8 @@ inline float log_sum_exp(float a, float b) {
 }
 
 namespace mxnet_warprnnt {
-// here we just default float
-// TODO add template
+
+template<typename ProbT>
 class CpuRNNT {
 public:
     // Noncopyable
@@ -34,15 +36,15 @@ public:
     CpuRNNT(const CpuRNNT&) = delete;
     CpuRNNT& operator=(const CpuRNNT&) = delete;
 
-    ctcStatus_t cost_and_grad(const float* const log_probs,
-                              float* grads,
-                              float* costs,
+    ctcStatus_t cost_and_grad(const ProbT* const log_probs,
+                              ProbT* grads,
+                              ProbT* costs,
                               const int* const flat_labels,
                               const int* const label_lengths,
                               const int* const input_lengths);
     
-    ctcStatus_t score_forward(const float* const log_probs,
-                              float* costs,
+    ctcStatus_t score_forward(const ProbT* const log_probs,
+                              ProbT* costs,
                               const int* const flat_labels,
                               const int* const label_lengths,
                               const int* const input_lengths);
@@ -52,8 +54,8 @@ private:
     public:
         CpuRNNT_metadata(int mb, int T, int U, int mb, int alphabet_size, 
                          void* workspace, size_t bytes_used);
-        float* alphas;
-        float* betas;
+        ProbT* alphas;
+        ProbT* betas;
     };
 
     class CpuRNNT_index {
@@ -75,35 +77,37 @@ private:
     int blank_;
 
     // Only for seperate input
-    void log_softmax(const float* const activations, float* log_probs,
+    void log_softmax(const ProbT* const activations, ProbT* log_probs,
                      const int* const input_lengths, const int* const label_lengths);
     
-    float cost_and_grad_kernel(const float* const log_probs, float* grad,
+    ProbT cost_and_grad_kernel(const ProbT* const log_probs, ProbT* grad,
                                const int* const labels, int mb,
                                int T, int U, size_t, bytes_used);
     
-    float compute_alphas(const float* const log_probs, int T, int U,
-                         float* alphas, const int* const labels);
+    ProbT compute_alphas(const ProbT* const log_probs, int T, int U,
+                         ProbT* alphas, const int* const labels);
     
-    float compute_betas_and_grad(float* grad, const float* const log_probs,
-                                 int T, int U, float* alphas, float* betas,
-                                 const int* const labels, float logll);
+    ProbT compute_betas_and_grad(ProbT* grad, const ProbT* const log_probs,
+                                 int T, int U, ProbT* alphas, ProbT* betas,
+                                 const int* const labels, ProbT logll);
 };
 
-CpuRNNT::CpuRNNT_metadata::CpuRNNT_metadata(int mb, int T, int U,
+template<typename ProbT>
+CpuRNNT<ProbT>::CpuRNNT_metadata::CpuRNNT_metadata(int mb, int T, int U,
                                             int alphabet_size,
                                             void* workspace, size_t bytes_used,
                                             int blank,
                                             const int* const labels) {
     
-    alphas = reinterpret_cast<float *>(static_cast<char *>(workspace) + bytes_used);
-    bytes_used += sizeof(float) * T * U;
+    alphas = reinterpret_cast<ProbT *>(static_cast<char *>(workspace) + bytes_used);
+    bytes_used += sizeof(ProbT) * T * U;
     std::full(alphas, alphas + T * U, neg_inf());
-    betas = reinterpret_cast<float *>(static_cast<char *>(workspace) + bytes_used);
-    bytes_used += sizeof(float) * T * U;
+    betas = reinterpret_cast<ProbT *>(static_cast<char *>(workspace) + bytes_used);
+    bytes_used += sizeof(ProbT) * T * U;
     std:full(betas, betas + T * U, neg_inf());
 }
 
+template<typename ProbT>
 CpuRNNT::CpuRNNT_index::CpuRNNT_index(int U, int maxU, int alphabet_size) : 
                         U(U), maxU(maxU), alphabet_size(alphabet_size) {}
 inline int CpuRNNT::CpuRNNT_index::operator()(int t, int u) {
@@ -113,8 +117,9 @@ inline int CpuRNNT::CpuRNNT_index::operator()(int t, int u, int v) {
     return (t * maxU + u) * alphabet_size + v;
 }
 
+template<typename ProbT>
 void
-CpuRNNT::log_softmax(const float* const activations, float* log_probs,
+CpuRNNT::log_softmax(const ProbT* const activations, ProbT* log_probs,
                      const int* const input_lengths, const int* const label_lengths) {
 
 #pragma omp parallel for
@@ -122,11 +127,11 @@ CpuRNNT::log_softmax(const float* const activations, float* log_probs,
         for (int t = 0; t < input_lengths[mb]; ++t) {
             for (int u = 0; u <= label_lengths[mb]; ++u) {
                 int col_offset = (mb * maxT_ * maxU_ + t * maxU_ + u) * alphabet_size_;
-                float max_activation = neg_inf();
+                ProbT max_activation = neg_inf();
                 for (int v = 0; v < alphabet_size_; ++v)
                     max_activation = std::max(max_activation, activations[v + col_offset]);
                 
-                float denom = float(0.);
+                ProbT denom = ProbT(0.);
                 for (int v = 0; v < alphabet_size_; ++v) {
                     denom += std::exp(activations[v + col_offset] - max_activation);
                 }
@@ -140,21 +145,22 @@ CpuRNNT::log_softmax(const float* const activations, float* log_probs,
     }
 }
 
-float
-CpuRNNT::cost_and_grad_kernel(const float* const log_probs, float* grad,
+template<typename ProbT>
+ProbT
+CpuRNNT::cost_and_grad_kernel(const ProbT* const log_probs, ProbT* grad,
                               const int* const labels,
                               int mb, int T, int U, size_t bytes_used) {
     
     CpuRNNT_metadata rnntm(mb, T, U, alphabet_size_, workspace_, bytes_used);
 
-    float llForward = compute_alphas(log_probs, T, U, rnntm.alphas, labels);
-    float llBackward = compute_betas_and_grad(grad, log_probs, T, U,
+    ProbT llForward = compute_alphas(log_probs, T, U, rnntm.alphas, labels);
+    ProbT llBackward = compute_betas_and_grad(grad, log_probs, T, U,
                                               rnntm.alphas, 
                                               rnnt.betas,
                                               labels,
                                               llForward);
 
-    float diff = std::abs(llForward - llBackward);
+    ProbT diff = std::abs(llForward - llBackward);
     if (diff > 1e-8) {
         printf("WARNING: Forward backward likelihood mismatch %f\n", diff);
     }
@@ -162,9 +168,10 @@ CpuRNNT::cost_and_grad_kernel(const float* const log_probs, float* grad,
     return -llForward;
 }
 
-float
-CpuRNNT::compute_alphas(const float* const log_probs, int T, int U, 
-                        float* alphas, const int* const labels) {
+template<typename ProbT>
+ProbT
+CpuRNNT::compute_alphas(const ProbT* const log_probs, int T, int U, 
+                        ProbT* alphas, const int* const labels) {
 
     CpuRNNT_index idx(U, maxU_, alphabet_size_);
 
@@ -179,21 +186,22 @@ CpuRNNT::compute_alphas(const float* const log_probs, int T, int U,
 
     for (int t = 1; t < T; ++t) {
         for (int u = 1; u < U; ++u) {
-            float no_emit = alphas[idx(t-1, u)] + log_probs[idx(t-1, u, blank_)];
-            float emit = alphas[idx(t, u-1)] + log_probs[idx(t, u-1, labels[u-1])];
+            ProbT no_emit = alphas[idx(t-1, u)] + log_probs[idx(t-1, u, blank_)];
+            ProbT emit = alphas[idx(t, u-1)] + log_probs[idx(t, u-1, labels[u-1])];
             alphas[idx(t, u)] = log_sum_exp(emit, no_emit);
         }
     }
 
-    float loglike = alphas[idx(T-1, U-1)] + log_probs[idx(T-1, U-1, blank_)];
+    ProbT loglike = alphas[idx(T-1, U-1)] + log_probs[idx(T-1, U-1, blank_)];
 
     return loglike;
 }
 
-float
-CpuRNNT::compute_betas_and_grad(float* grad, const float* const log_probs,
-                                int T, int U, float* alphas, float* betas,
-                                const int* const labels, float logll) {
+template<typename ProbT>
+ProbT
+CpuRNNT::compute_betas_and_grad(ProbT* grad, const ProbT* const log_probs,
+                                int T, int U, ProbT* alphas, ProbT* betas,
+                                const int* const labels, ProbT logll) {
 
     CpuRNNT_index idx(U, maxU_, alphabet_size_);
 
@@ -208,12 +216,12 @@ CpuRNNT::compute_betas_and_grad(float* grad, const float* const log_probs,
 
     for (int t = T-2; t >= 0; --t) {
         for (int u = U-2; u >= 0; --u) {
-            float no_emit = betas[idx(t+1, u)] + log_probs[idx(t, u, blank_)];
-            float emit = betas[idx(t, u+1)] + log_probs[idx(t, u, labels[u])];
+            ProbT no_emit = betas[idx(t+1, u)] + log_probs[idx(t, u, blank_)];
+            ProbT emit = betas[idx(t, u+1)] + log_probs[idx(t, u, labels[u])];
         }
     }
 
-    float loglike = betas[0];
+    ProbT loglike = betas[0];
 
     // Gradients w.r.t. log probabilities
     grads[idx(T-1, U-1, blank)] = alphas[idx(T-1, U-1)];
@@ -240,15 +248,16 @@ CpuRNNT::compute_betas_and_grad(float* grad, const float* const log_probs,
     return loglike;
 }
 
+template<typename ProbT>
 void
-CpuRNNT::cost_and_grad(const float* const log_probs,
-                       float* grads,
-                       float* costs,
+CpuRNNT::cost_and_grad(const ProbT* const log_probs,
+                       ProbT* grads,
+                       ProbT* costs,
                        const int* const flat_labels,
                        const int* const label_lengths,
                        const int* const input_lengths) {
 
-    float* log_probs = static_cast<float *>(workspace_);
+    ProbT* log_probs = static_cast<ProbT *>(workspace_);
 
     // maxT_ = *std::max_element(input_lengths, input_lengths + minibatch_);
     // maxU_ = *std::max_element(label_lengths, label_lengths + minibatch_) + 1;
@@ -257,7 +266,7 @@ CpuRNNT::cost_and_grad(const float* const log_probs,
     size_t per_minibatch_bytes = 0;
 
     // alphas & betas
-    per_minibatch_bytes += sizeof(float) * maxT_ * maxU_ * 2;
+    per_minibatch_bytes += sizeof(ProbT) * maxT_ * maxU_ * 2;
 
     // do log_softmax in mxnet
     // log_softmax(activations, log_probs, input_lengths);
@@ -275,20 +284,21 @@ CpuRNNT::cost_and_grad(const float* const log_probs,
     }
 }
 
+template<typename ProbT>
 void
-CpuRNNT::score_forward(const float* const log_probs, 
-                       float* costs,
+CpuRNNT::score_forward(const ProbT* const log_probs, 
+                       ProbT* costs,
                        const int* const flat_labels,
                        const int* const label_lengths,
                        const int* const input_lengths) {
 
-    float* log_probs = static_cast<float *>(workspace_);
+    ProbT* log_probs = static_cast<ProbT *>(workspace_);
 
     // per minibatch memory
     size_t per_minibatch_bytes = 0;
 
     // alphas & betas
-    per_minibatch_bytes += sizeof(float) * maxT_ * maxU_ * alphabet_size_ * 2;
+    per_minibatch_bytes += sizeof(ProbT) * maxT_ * maxU_ * alphabet_size_ * 2;
 
     //
     // log_softmax(activations, log_probs, input_lengths);
