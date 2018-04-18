@@ -18,6 +18,11 @@ Then follow the installation instructions of mxnet:
 https://mxnet.incubator.apache.org/install/index.html
 ```
 
+## Reference
+* [Sequence Transduction with Recurrent Neural Networks](https://arxiv.org/abs/1211.3711)
+* [Baidu warp-ctc](https://github.com/baidu-research/warp-ctc)
+* [Awni implementation of transducer](https://github.com/awni/transducer)
+
 ## TODO
 * Performance test
 * GPU implementation
