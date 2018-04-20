@@ -64,7 +64,7 @@ private:
         int maxU;
         int minibatch;
         int alphabet_size;
-        bool batch_first
+        bool batch_first;
 
         int operator()(int t, int u);
         int operator()(int t, int u, int v);
@@ -76,6 +76,7 @@ private:
     int alphabet_size_; // Number of characters plus blank
     void* workspace_;
     int blank_;
+    bool batch_first;
 
     // Only for seperate input
     void log_softmax(const ProbT* const activations, ProbT* log_probs,

@@ -185,10 +185,10 @@ class RNNTLossOp : public Operator {
 
     // TODO if xpu == gpu then move all data to cpu
 
-    int batch_size = static_cast<int>data.size(0);
+    int batch_size = static_cast<int>(data.size(0));
     int maxT = static_cast<int>(data.size(1));
     int maxU = static_cast<int>(data.size(2));
-    int alphabet_size = static_cast<int>data.size(3);
+    int alphabet_size = static_cast<int>(data.size(3));
 
     // data_lengths
     std::vector<int> data_lengths(batch_size, maxT);
@@ -207,8 +207,7 @@ class RNNTLossOp : public Operator {
     size_t size_bytes;
     bool gpu = data.kDevCPU ? false : true;
 
-    get_workspace_size<real_t>(maxT, maxU, alphabet_size,
-                               batch_size, gpu, &size_bytes);
+    get_workspace_size<real_t>(maxT, maxU, batch_size, gpu, &size_bytes);
 
     // round-up so there are enough elems in memory
     int num_tmp_elems = (size_bytes + sizeof(real_t) - 1) / sizeof(real_t);
@@ -216,8 +215,8 @@ class RNNTLossOp : public Operator {
         ctx.requested[rnnt_loss::kTempSpace].get_space_typed<xpu, 1, real_t>(
             Shape1(num_tmp_elems), s);
 
-    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels->data(),
-                     label_lengths->data(), data_lengths->data(),
+    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels.data(),
+                     label_lengths.data(), data_lengths.data(),
                      workspace.dptr_, req[rnnt_loss::kGrad] != mxnet::kNullOp,
                      param_.blank_label == 0?0:(alphabet_size-1));
 
