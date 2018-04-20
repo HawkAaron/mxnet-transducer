@@ -287,8 +287,8 @@ CpuRNNT<ProbT>::cost_and_grad(ProbT* const log_probs,
         int batch_size = alphabet_size_;
         if (batch_first) batch_size = maxT_ * maxU_ * alphabet_size_;
 
-        costs[mb] = cost_and_grad_kernel(grads + mb * batch_size,
-                             log_probs + mb * batch_size,
+        costs[mb] = cost_and_grad_kernel(log_probs + mb * batch_size,
+                             grads + mb * batch_size,
                              flat_labels + std::accumulate(label_lengths, label_lengths + mb, 0),
                              mb, T, U, mb * per_minibatch_bytes);
     }
