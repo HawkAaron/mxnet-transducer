@@ -54,7 +54,7 @@ enum RNNTLossOpForwardResource { kTempSpace };
 
 template <typename T>
 inline void get_workspace_size(int maxT, int maxU,
-                               int alphabet_size, int minibatch, bool gpu,
+                               int minibatch, bool gpu,
                                size_t *size_bytes) {
 
   *size_bytes = 0;
@@ -67,7 +67,7 @@ inline void get_workspace_size(int maxT, int maxU,
   size_t per_minibatch_bytes = 0;
 
   // alphas & betas
-  per_minibatch_bytes += sizeof(T) * maxT * maxU * alphabet_size * 2;
+  per_minibatch_bytes += sizeof(T) * maxT * maxU * 2;
 
   *size_bytes = per_minibatch_bytes * minibatch;
 }
@@ -183,12 +183,15 @@ class RNNTLossOp : public Operator {
     Tensor<xpu, 4, real_t> grad =
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
-    int max_seq_len = data.size(1);
-    int batch_size = data.size(0);
-    int alphabet_size = data.size(3);
+    // TODO if xpu == gpu then move all data to cpu
+
+    int batch_size = static_cast<int>data.size(0);
+    int maxT = static_cast<int>(data.size(1));
+    int maxU = static_cast<int>(data.size(2));
+    int alphabet_size = static_cast<int>data.size(3);
 
     // data_lengths
-    std::vector<int> data_lengths(batch_size, max_seq_len);
+    std::vector<int> data_lengths(batch_size, maxT);
     int kInputLength = 2;
     IndexTensorToVector(in_data[kInputLength].get<xpu, 1, real_t>(s), &data_lengths);
 
@@ -200,9 +203,23 @@ class RNNTLossOp : public Operator {
     exceed_cudnn_limit = PackLabelByLength(labels, in_data[kLabelLength].get<xpu, 1, real_t>(s),
                                             &packed_labels, &label_lengths);
 
-    baidu_forward(ctx, s, data, costs, grad,
-                  &data_lengths, &label_lengths, &packed_labels,
-                  batch_size, alphabet_size, req[rnnt_loss::kGrad] != mxnet::kNullOp);
+    // allocate temporary workspace
+    size_t size_bytes;
+    bool gpu = data.kDevCPU ? false : true;
+
+    get_workspace_size<real_t>(maxT, maxU, alphabet_size,
+                               batch_size, gpu, &size_bytes);
+
+    // round-up so there are enough elems in memory
+    int num_tmp_elems = (size_bytes + sizeof(real_t) - 1) / sizeof(real_t);
+    Tensor<xpu, 1, real_t> workspace =
+        ctx.requested[rnnt_loss::kTempSpace].get_space_typed<xpu, 1, real_t>(
+            Shape1(num_tmp_elems), s);
+
+    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels->data(),
+                     label_lengths->data(), data_lengths->data(),
+                     workspace.dptr_, req[rnnt_loss::kGrad] != mxnet::kNullOp,
+                     param_.blank_label == 0?0:(alphabet_size-1));
 
   }
 
@@ -234,37 +251,6 @@ class RNNTLossOp : public Operator {
   RNNTLossParam param_;
   bool exceed_cudnn_limit;
 
-  inline virtual void baidu_forward(const OpContext &ctx,
-                                    mshadow::Stream<xpu>* s,
-                                    mshadow::Tensor<xpu, 4, real_t> data,
-                                    mshadow::Tensor<xpu, 1, real_t> costs,
-                                    mshadow::Tensor<xpu, 4, real_t> grad,
-                                    std::vector<int>* data_lengths,
-                                    std::vector<int>* label_lengths,
-                                    std::vector<int>* packed_labels,
-                                    int batch_size,
-                                    int alphabet_size,
-                                    bool req_grad) {
-    using namespace mshadow;
-    // allocate temporary workspace
-    size_t size_bytes;
-    bool gpu = data.kDevCPU ? false : true;
-    int maxT = static_cast<int>(data.size(1));
-    int maxU = static_cast<int>(data.size(2));
-    get_workspace_size<real_t>(maxT, maxU, alphabet_size,
-                               batch_size, gpu, &size_bytes);
-
-    // round-up so there are enough elems in memory
-    int num_tmp_elems = (size_bytes + sizeof(real_t) - 1) / sizeof(real_t);
-    Tensor<xpu, 1, real_t> workspace =
-        ctx.requested[rnnt_loss::kTempSpace].get_space_typed<xpu, 1, real_t>(
-            Shape1(num_tmp_elems), s);
-
-    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels->data(),
-                     label_lengths->data(), data_lengths->data(),
-                     workspace.dptr_, req_grad,
-                     param_.blank_label == 0?0:(alphabet_size-1));
-  }
 };  // class RNNTLossOp
 
 template <typename xpu>
