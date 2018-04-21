@@ -218,7 +218,7 @@ class RNNTLossOp : public Operator {
     compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels.data(),
                      label_lengths.data(), data_lengths.data(),
                      workspace.dptr_, req[rnnt_loss::kGrad] != mxnet::kNullOp,
-                     param_.blank_label == 0?0:(alphabet_size-1));
+                     param_.blank_label);
 
   }
 
@@ -243,7 +243,7 @@ class RNNTLossOp : public Operator {
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
     Assign(data_grad, req[rnnt_loss::kData],
-           mshadow::expr::broadcast<1>(output_grad, data_grad.shape_) * data_grad_computed);
+           mshadow::expr::broadcast<0>(output_grad, data_grad.shape_) * data_grad_computed);
   }
 
  private:

@@ -43,7 +43,7 @@ public:
                               const int* const label_lengths,
                               const int* const input_lengths);
     
-    void score_forward(const ProbT* const log_probs,
+    void score_forward(ProbT* const log_probs,
                               ProbT* costs,
                               const int* const flat_labels,
                               const int* const label_lengths,
@@ -157,7 +157,6 @@ CpuRNNT<ProbT>::cost_and_grad_kernel(const ProbT* const log_probs, ProbT* grad,
                               int mb, int T, int U, size_t bytes_used) {
     
     CpuRNNT_metadata rnntm(T, U, workspace_, bytes_used);
-
     ProbT llForward = compute_alphas(log_probs, T, U, rnntm.alphas, labels);
     ProbT llBackward = compute_betas_and_grad(grad, log_probs, T, U,
                                               rnntm.alphas, 
@@ -166,7 +165,7 @@ CpuRNNT<ProbT>::cost_and_grad_kernel(const ProbT* const log_probs, ProbT* grad,
                                               llForward);
 
     ProbT diff = std::abs(llForward - llBackward);
-    if (diff > 1e-8) {
+    if (diff > 1e-2) {
         printf("WARNING: Forward backward likelihood mismatch %f\n", diff);
     }
 
@@ -229,6 +228,8 @@ CpuRNNT<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const log_probs
 
     ProbT loglike = betas[0];
 
+    // NOTE this is important.
+    std::fill(grad, grad + maxT_ * maxU_ * alphabet_size_, 0);
     // Gradients w.r.t. log probabilities
     grad[idx(T-1, U-1, blank_)] = alphas[idx(T-1, U-1)];
     for (int t = 0; t < T-1; ++t) {
@@ -296,7 +297,7 @@ CpuRNNT<ProbT>::cost_and_grad(ProbT* const log_probs,
 
 template<typename ProbT>
 void
-CpuRNNT<ProbT>::score_forward(const ProbT* const log_probs, 
+CpuRNNT<ProbT>::score_forward(ProbT* const log_probs, 
                        ProbT* costs,
                        const int* const flat_labels,
                        const int* const label_lengths,
