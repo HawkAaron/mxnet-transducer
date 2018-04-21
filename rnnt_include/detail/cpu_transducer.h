@@ -27,9 +27,9 @@ template<typename ProbT>
 class CpuRNNT {
 public:
     // Noncopyable
-    CpuRNNT(int minibatch, int maxT, int maxU, int alphabet_size, void* workspace, int blank, bool batch_first=true) :
+    CpuRNNT(int minibatch, int maxT, int maxU, int alphabet_size, void* workspace, int blank) :
         minibatch_(minibatch), maxT_(maxT), maxU_(maxU), alphabet_size_(alphabet_size), 
-        workspace_(workspace), blank_(blank), batch_first(batch_first) {
+        workspace_(workspace), blank_(blank) {
 
     };
 
@@ -59,12 +59,11 @@ private:
 
     class CpuRNNT_index {
     public:
-        CpuRNNT_index(int U, int maxU, int minibatch, int alphabet_size, bool batch_first);
+        CpuRNNT_index(int U, int maxU, int minibatch, int alphabet_size);
         int U;
         int maxU;
         int minibatch;
         int alphabet_size;
-        bool batch_first;
 
         int operator()(int t, int u);
         int operator()(int t, int u, int v);
@@ -76,7 +75,6 @@ private:
     int alphabet_size_; // Number of characters plus blank
     void* workspace_;
     int blank_;
-    bool batch_first;
 
     // Only for seperate input
     void log_softmax(const ProbT* const activations, ProbT* log_probs,
@@ -106,8 +104,8 @@ CpuRNNT<ProbT>::CpuRNNT_metadata::CpuRNNT_metadata(int T, int U, void* workspace
 }
 
 template<typename ProbT>
-CpuRNNT<ProbT>::CpuRNNT_index::CpuRNNT_index(int U, int maxU, int minibatch, int alphabet_size, bool batch_first) : 
-                        U(U), maxU(maxU), minibatch(minibatch), alphabet_size(alphabet_size), batch_first(batch_first) {}
+CpuRNNT<ProbT>::CpuRNNT_index::CpuRNNT_index(int U, int maxU, int minibatch, int alphabet_size) : 
+                        U(U), maxU(maxU), minibatch(minibatch), alphabet_size(alphabet_size) {}
 
 template<typename ProbT>
 inline int CpuRNNT<ProbT>::CpuRNNT_index::operator()(int t, int u) {
@@ -116,8 +114,6 @@ inline int CpuRNNT<ProbT>::CpuRNNT_index::operator()(int t, int u) {
 
 template<typename ProbT>
 inline int CpuRNNT<ProbT>::CpuRNNT_index::operator()(int t, int u, int v) {
-    if (batch_first)
-        return (t * maxU + u) * alphabet_size + v;
     return (t * maxU + u) * minibatch * alphabet_size + v;
 }
 
@@ -131,7 +127,6 @@ CpuRNNT<ProbT>::log_softmax(const ProbT* const activations, ProbT* log_probs,
         for (int t = 0; t < input_lengths[mb]; ++t) {
             for (int u = 0; u <= label_lengths[mb]; ++u) {
                 int col_offset = ((t * maxU_ + u) * minibatch_ + mb) * alphabet_size_;
-                if (batch_first) col_offset = ((mb * maxT_ + t) * maxU_ + u) * alphabet_size_;
                 ProbT max_activation = neg_inf<ProbT>();
                 for (int v = 0; v < alphabet_size_; ++v)
                     max_activation = std::max(max_activation, activations[v + col_offset]);
@@ -177,7 +172,7 @@ ProbT
 CpuRNNT<ProbT>::compute_alphas(const ProbT* const log_probs, int T, int U, 
                         ProbT* alphas, const int* const labels) {
 
-    CpuRNNT_index idx(U, maxU_, minibatch_, alphabet_size_, batch_first);
+    CpuRNNT_index idx(U, maxU_, minibatch_, alphabet_size_);
 
     alphas[0] = 0;
     for (int t = 1; t < T; ++t) {
@@ -207,7 +202,7 @@ CpuRNNT<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const log_probs
                                 int T, int U, ProbT* alphas, ProbT* betas,
                                 const int* const labels, ProbT logll) {
 
-    CpuRNNT_index idx(U, maxU_, minibatch_, alphabet_size_, batch_first);
+    CpuRNNT_index idx(U, maxU_, minibatch_, alphabet_size_);
 
     betas[idx(T-1, U-1)] = log_probs[idx(T-1, U-1, blank_)];
     for (int t = T-2; t >= 0; --t) {
@@ -228,8 +223,6 @@ CpuRNNT<ProbT>::compute_betas_and_grad(ProbT* grad, const ProbT* const log_probs
 
     ProbT loglike = betas[0];
 
-    // NOTE this is important.
-    std::fill(grad, grad + maxT_ * maxU_ * alphabet_size_, 0);
     // Gradients w.r.t. log probabilities
     grad[idx(T-1, U-1, blank_)] = alphas[idx(T-1, U-1)];
     for (int t = 0; t < T-1; ++t) {
@@ -281,15 +274,16 @@ CpuRNNT<ProbT>::cost_and_grad(ProbT* const log_probs,
     // do log_softmax in mxnet
     // log_softmax(activations, log_probs, input_lengths);
 
+    // NOTE this is important.
+    memset(grads, 0, sizeof(ProbT) * minibatch_ * maxT_ * maxU_ * alphabet_size_);
+
 #pragma omp parallel for 
     for (int mb = 0; mb < minibatch_; ++mb) {
         const int T = input_lengths[mb];     // Length of utterance (time)
         const int U = label_lengths[mb] + 1; // Number of labels in transcription
-        int batch_size = alphabet_size_;
-        if (batch_first) batch_size = maxT_ * maxU_ * alphabet_size_;
 
-        costs[mb] = cost_and_grad_kernel(log_probs + mb * batch_size,
-                             grads + mb * batch_size,
+        costs[mb] = cost_and_grad_kernel(log_probs + mb * alphabet_size_,
+                             grads + mb * alphabet_size_,
                              flat_labels + std::accumulate(label_lengths, label_lengths + mb, 0),
                              mb, T, U, mb * per_minibatch_bytes);
     }
@@ -318,12 +312,10 @@ CpuRNNT<ProbT>::score_forward(ProbT* const log_probs,
     for (int mb = 0; mb < minibatch_; ++mb) {
         const int T = input_lengths[mb];     // Length of utterance (time)
         const int U = label_lengths[mb] + 1; // Number of labels in transcription
-        int batch_size = alphabet_size_;
-        if (batch_first) batch_size = maxT_ * maxU_ * alphabet_size_;
 
         CpuRNNT_metadata rnntm(T, U, workspace_, mb * per_minibatch_bytes);
 
-        costs[mb] = -compute_alphas(log_probs + mb * batch_size, T, U, 
+        costs[mb] = -compute_alphas(log_probs + mb * alphabet_size_, T, U, 
                             rnntm.alphas, 
                             flat_labels + std::accumulate(label_lengths, label_lengths + mb, 0));
     }

@@ -183,12 +183,9 @@ class RNNTLossOp : public Operator {
     Tensor<xpu, 4, real_t> grad =
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
-    // TODO if xpu == gpu then move all data to cpu
-
-    int batch_size = static_cast<int>(data.size(0));
-    int maxT = static_cast<int>(data.size(1));
-    int maxU = static_cast<int>(data.size(2));
-    int alphabet_size = static_cast<int>(data.size(3));
+    int maxT = static_cast<int>(data.size(0));
+    int maxU = static_cast<int>(data.size(1));
+    int batch_size = static_cast<int>(data.size(2));
 
     // data_lengths
     std::vector<int> data_lengths(batch_size, maxT);
@@ -243,7 +240,7 @@ class RNNTLossOp : public Operator {
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
     Assign(data_grad, req[rnnt_loss::kData],
-           mshadow::expr::broadcast<0>(output_grad, data_grad.shape_) * data_grad_computed);
+           mshadow::expr::broadcast<2>(output_grad, data_grad.shape_) * data_grad_computed);
   }
 
  private:
@@ -289,13 +286,13 @@ class RNNTLossProp : public OperatorProperty {
     const TShape &lshape = (*in_shape)[rnnt_loss::kLabel];
     CHECK_EQ(dshape.ndim(), 4U) << "The data array must be of rank 4.";
     CHECK_EQ(lshape.ndim(), 2U) << "The labels array must be of rank 2.";
-    CHECK_EQ(dshape[0], lshape[0])
+    CHECK_EQ(dshape[2], lshape[0])
         << "The batch size for the labels and data arrays must be the same.";
 
     int kInputLength = 2;
     const TShape &dlshape = (*in_shape)[kInputLength];
     CHECK_EQ(dlshape.ndim(), 1U) << "Data length array must be a vector.";
-    CHECK_EQ(dlshape[0], dshape[0])
+    CHECK_EQ(dlshape[0], dshape[2])
         << "The batch size for the data and data lengths must be the same.";
 
     int kLabelLength = 3;
@@ -305,7 +302,7 @@ class RNNTLossProp : public OperatorProperty {
         << "The batch size for the labels and label lengths must be the same.";
 
     TShape oshape(1);
-    oshape[0] = dshape[0];  // batch size
+    oshape[0] = dshape[2];  // batch size
     out_shape->clear();
     out_shape->push_back(oshape);
     out_shape->push_back(dshape);  // grad output
