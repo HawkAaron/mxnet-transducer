@@ -25,27 +25,29 @@
 */
 
 #include "./rnnt_loss-inl.h"
-#include "./rnnt_include/detail/cpu_transducer.h"
+#include "./rnnt_include/detail/cpu_rnnt.h"
 
 namespace mshadow {
 
 template <typename DType>
-void compute_rnnt_cost(const Tensor<cpu, 4, DType> activations, // BTUV
-                             DType *costs, DType *grads, int *labels,
-                             int *label_lengths, int *data_lengths,
-                             void *workspace, int train, int blank_label) {
-  int minibatch = static_cast<int>(activations.size(0));
-  int maxT = static_cast<int>(activations.size(1));
-  int maxU = static_cast<int>(activations.size(2));
-  int alphabet_size = static_cast<int>(activations.size(3));
+void compute_rnnt_cost(DType *trans_acts, DType *pred_acts, DType *costs, 
+                      DType *trans_grads, DType *pred_grads, int *labels,
+                      int *label_lengths, int *data_lengths,
+                      void *workspace, int train, int blank_label,
+                      int minibatch, int maxT, int maxU, int alphabet_size) {
 
-  mxnet_warprnnt::CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
   if (train) {
-    rnnt.cost_and_grad(activations.dptr_, grads, costs, labels,
-                             label_lengths, data_lengths);
+    rnnt.cost_and_grad(trans_acts, pred_acts, 
+                        trans_grads, pred_grads,
+                        costs, 
+                        labels, label_lengths, 
+                        data_lengths);
   } else {
-    rnnt.score_forward(activations.dptr_, costs, labels, label_lengths,
-                             data_lengths);
+    rnnt.score_forward(trans_acts, pred_acts, 
+                        costs, 
+                        labels, label_lengths, 
+                        data_lengths);
   }
 }
 
@@ -55,7 +57,7 @@ namespace mxnet {
 namespace op {
 template<>
 Operator *CreateOp<gpu>(RNNTLossParam param, int dtype) {
-  return new RNNTLossOp<cpu>(param);
+  return new RNNTLossOp<gpu>(param);
 }
 
 }  // namespace op

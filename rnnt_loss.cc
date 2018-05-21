@@ -30,20 +30,24 @@
 namespace mshadow {
 
 template <typename DType>
-void compute_rnnt_cost(const Tensor<cpu, 4, DType> activations, // BTUV
-                             DType *costs, DType *grads, int *labels,
-                             int *label_lengths, int *data_lengths,
-                             void *workspace, int train, int blank_label) {
-  int maxT = static_cast<int>(activations.size(0));
-  int maxU = static_cast<int>(activations.size(1));
-  int minibatch = static_cast<int>(activations.size(2));
-  int alphabet_size = static_cast<int>(activations.size(3));
+void compute_rnnt_cost(DType *trans_acts, DType *pred_acts, DType *costs, 
+                      DType *trans_grads, DType *pred_grads, int *labels,
+                      int *label_lengths, int *data_lengths,
+                      void *workspace, int train, int blank_label,
+                      int minibatch, int maxT, int maxU, int alphabet_size) {
 
-  mxnet_warprnnt::CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
   if (train) {
-    rnnt.cost_and_grad(activations.dptr_, grads, costs, labels, label_lengths, data_lengths);
+    rnnt.cost_and_grad(trans_acts, pred_acts, 
+                        trans_grads, pred_grads,
+                        costs, 
+                        labels, label_lengths, 
+                        data_lengths);
   } else {
-    rnnt.score_forward(activations.dptr_, costs, labels, label_lengths, data_lengths);
+    rnnt.score_forward(trans_acts, pred_acts, 
+                        costs, 
+                        labels, label_lengths, 
+                        data_lengths);
   }
 }
 
@@ -74,17 +78,16 @@ MXNET_REGISTER_OP_PROPERTY(_contrib_RNNTLoss, RNNTLossProp)
 
 The shapes of the inputs and outputs:
 
-- **data**: `(batch_size, sequence_length, label_length + 1, alphabet_size)`
+- **trans_acts**: `(batch_size, sequence_length, alphabet_size)`
+- **pred_acts**: `(batch_size, label_length + 1, alphabet_size)`
 - **label**: `(batch_size, label_sequence_length)`
 - **out**: `(batch_size)`
 
-The `data` tensor consists of sequences of activation vectors (after applying softmax),
+The `trans_acts` tensor consists of sequences of Transcription Network's activation vectors (before softmax),
 with i-th channel in the last dimension corresponding to i-th label
 for i between 0 and alphabet_size-1 (i.e always 0-indexed).
 Alphabet size should include one additional value reserved for blank label.
-When `blank_label` is ``"first"``, the ``0``-th channel is be reserved for
-activation of blank label, or otherwise if it is "last", ``(alphabet_size-1)``-th channel should be
-reserved for blank label.
+The `pred_acts` tensor is the output of Prediction Network before softmax.
 
 ``label`` is an index matrix of integers. When `blank_label` is ``"first"``,
 the value 0 is then reserved for blank label, and should not be passed in this matrix. Otherwise,
@@ -96,15 +99,14 @@ See *Sequence Transduction with Recurrent Neural Networks*, A. Graves. for more
 information on the definition and the algorithm.
 
 )code" ADD_FILELINE)
-    .add_argument("data", "NDArray-or-Symbol", "Input data to the rnnt_loss op.")
+    .add_argument("trans_acts", "NDArray-or-Symbol", "Input data to the rnnt_loss op.")
+    .add_argument("pred_acts", "NDArray-or-Symbol", "Input data to the rnnt_loss op.")
     .add_argument("label", "NDArray-or-Symbol",
                   "Ground-truth labels for the loss.")
     .add_argument("data_lengths", "NDArray-or-Symbol",
-                  "Lengths of data for each of the samples. Only required "
-                  "when use_data_lengths is true.")
+                  "Lengths of data for each of the samples.")
     .add_argument("label_lengths", "NDArray-or-Symbol",
-                  "Lengths of labels for each of the samples. Only required "
-                  "when use_label_lengths is true.")
+                  "Lengths of labels for each of the samples.")
     .add_arguments(RNNTLossParam::__FIELDS__());
 
 NNVM_REGISTER_OP(_contrib_RNNTLoss).add_alias("_contrib_rnnt_loss");
