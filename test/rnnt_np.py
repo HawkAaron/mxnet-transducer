@@ -1,10 +1,15 @@
 import mxnet as mx
 import numpy as np
 
+def log_softmax(x, axis):
+    x = (x - x.max(axis=axis, keepdims=True))
+    return x - np.log(np.sum(np.exp(x), axis=axis, keepdims=True))
+
+
 def forward_pass(log_probs, labels, blank):
 
     T, U, _ = log_probs.shape
-    alphas = np.zeros((T, U))
+    alphas = np.zeros((T, U), dtype='f')
 
     for t in range(1, T):
         alphas[t, 0] = alphas[t-1, 0] + log_probs[t-1, 0, blank]
@@ -23,7 +28,7 @@ def forward_pass(log_probs, labels, blank):
 def backward_pass(log_probs, labels, blank):
 
     T, U, _ = log_probs.shape
-    betas = np.zeros((T, U))
+    betas = np.zeros((T, U), dtype='f')
     betas[T-1, U-1] = log_probs[T-1, U-1, blank]
 
     for t in reversed(range(T-1)):
@@ -51,7 +56,8 @@ def compute_gradient(log_probs, alphas, betas, labels, blank):
     for u, l in enumerate(labels):
         grads[:, u, l] = alphas[:, u] + betas[:, u+1]
 
-    grads = -np.exp(grads + log_probs - log_like)
+    grads = np.exp(alphas[..., None] + betas[..., None] + log_probs - log_like) \
+            - np.exp(grads + log_probs - log_like)
     return grads
 
 def transduce(log_probs, labels, blank=0):
@@ -70,7 +76,8 @@ def transduce(log_probs, labels, blank=0):
     grads = compute_gradient(log_probs, alphas, betas, labels, blank)
     return -ll_forward, grads
 
-def transduce_batch(log_probs, labels, flen, glen, blank=0):
+def transduce_batch(probs, labels, flen, glen, blank=0):
+    log_probs = log_softmax(probs, axis=3) # NOTE apply log softmax
     grads = np.zeros_like(log_probs)
     costs = []
     # TODO parallel loop
@@ -95,21 +102,25 @@ class RNNTransducer(mx.operator.CustomOp):
 
     def forward(self, is_train, req, in_data, out_data, aux):
         '''
-        `log_ytu`: am & pm joint probability, layout 'BTUV'
+        `trans_acts`: transcription network activations before softmax, layout NTC
+        `pred_acts`: prediction network activations before softmax, layout NTC
         `y`: label sequence (blank, y1, ..., yU), layout 'BU'
-        `flen`: acoustic model outputs sequence true length <= T
+        `flen`: transcription network outputs sequence true length <= T
         `glen`: label sequence length <= U
         '''
-        log_ytu, y, flen, glen = in_data
+        trans_acts, pred_acts, y, flen, glen = in_data
+        acts = trans_acts.expand_dims(axis=2) + pred_acts.expand_dims(axis=1)
 
-        loss, grad = transduce_batch(log_ytu.asnumpy(), y.asnumpy().astype(np.int32), flen.asnumpy(), glen.asnumpy(), self.blank)
-        self.saved_tensors = mx.nd.array(grad, ctx=log_ytu.context),
+        loss, grad = transduce_batch(acts.asnumpy(), y.asnumpy().astype(np.int32), flen.asnumpy(), glen.asnumpy(), self.blank)
+        grad = mx.nd.array(grad, ctx=acts.context)
+        self.saved_tensors = mx.nd.sum(grad, axis=2), mx.nd.sum(grad, axis=1)
 
-        self.assign(out_data[0], req[0], mx.nd.array(loss, ctx=log_ytu.context))
+        self.assign(out_data[0], req[0], mx.nd.array(loss, ctx=acts.context))
 
     def backward(self, req, out_grad, in_data, out_data, in_grad, aux):
-        grad,  = self.saved_tensors
-        self.assign(in_grad[0], req[0], grad)
+        trans_grad, pred_grad = self.saved_tensors
+        self.assign(in_grad[0], req[0], trans_grad)
+        self.assign(in_grad[1], req[1], pred_grad)
 
 
 @mx.operator.register('Transducer')
@@ -119,7 +130,7 @@ class RNNTransducerProp(mx.operator.CustomOpProp):
         self.blank = int(blank)
 
     def list_arguments(self):
-        return ['log_ytu', 'label', 'flen', 'glen']
+        return ['trans_acts', 'pred_acts', 'label', 'flen', 'glen']
 
     def list_outputs(self):
         return ['output']
@@ -131,11 +142,11 @@ class RNNTransducerProp(mx.operator.CustomOpProp):
         return RNNTransducer(self.blank)
     
 class RNNTLoss(mx.gluon.loss.Loss):
-    def __init__(self, blank=0, weight=None, **kwargs):
+    def __init__(self, blank_label=0, weight=None, **kwargs):
         batch_axis = 0
-        self.blank = blank
+        self.blank = blank_label
         super(RNNTLoss, self).__init__(weight, batch_axis, **kwargs)
     
-    def hybrid_forward(self, F, log_ytu, label, flen, glen):
-        loss = F.Custom(log_ytu, label, flen, glen, blank=self.blank, op_type='Transducer')
+    def hybrid_forward(self, F, trans_acts, pred_acts, label, flen, glen):
+        loss = F.Custom(trans_acts, pred_acts, label, flen, glen, blank=self.blank, op_type='Transducer')
         return loss

@@ -4,7 +4,7 @@ from mxnet import autograd, gluon
 class RNNTLoss(gluon.loss.Loss):
     def __init__(self, layout='NTC', label_layout='NT', blank_label=0, weight=None, **kwargs):
         assert layout in ['NTC', 'TNC'],\
-            "Only 'NTC' and 'TNC' layouts for pred are supported. Got: %s"%layout
+            "Only 'NTC' and 'TNC' layouts for acts are supported. Got: %s"%layout
         assert label_layout in ['NT', 'TN'],\
             "Only 'NT' and 'TN' layouts for label are supported. Got: %s"%label_layout
         self._layout = layout
@@ -13,13 +13,13 @@ class RNNTLoss(gluon.loss.Loss):
         super(RNNTLoss, self).__init__(weight, batch_axis, **kwargs)
         self.blank_label = blank_label
         
-    def hybrid_forward(self, F, pred, label, pred_lengths, label_lengths):
-        if self._layout == 'NTC':
-            pred = F.moveaxis(pred, 0, 2)
+    def hybrid_forward(self, F, trans_acts, pred_acts, label, pred_lengths, label_lengths):
+        if self._layout == 'TNC':
+            trans_acts = F.swapaxes(trans_acts, 0, 1)
+            pred_acts = F.swapaxes(pred_acts, 0, 1)
         if self._batch_axis == 1:
             label = F.swapaxes(label, 0, 1)
-        cpu = mx.cpu()
-        loss = F.contrib.RNNTLoss(pred.as_in_context(cpu), label.as_in_context(cpu), 
-            pred_lengths.as_in_context(cpu), label_lengths.as_in_context(cpu),
-                        blank_label=self.blank_label)
+
+        loss = F.contrib.RNNTLoss(trans_acts, pred_acts, label, 
+            pred_lengths, label_lengths, blank_label=self.blank_label)
         return loss
