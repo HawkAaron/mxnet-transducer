@@ -25,7 +25,7 @@
 */
 
 #include "./rnnt_loss-inl.h"
-#include "./rnnt_include/detail/cpu_transducer.h"
+#include "./rnnt_include/detail/cpu_rnnt.h"
 
 namespace mshadow {
 
