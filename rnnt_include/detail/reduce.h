@@ -36,6 +36,7 @@ struct CTAReduce {
     }
 };
 
+// TODO return 
 template <typename T>
 inline __device__ T logp(const T* ft, const T* gu, int col, int num_rows, int idx, int maxT, int maxU) {
     int u = col % maxU;

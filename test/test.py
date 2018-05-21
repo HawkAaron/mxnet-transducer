@@ -26,9 +26,9 @@ args = parser.parse_args()
 def wrap_and_call(trans_acts, pred_acts, labels, blank=0):
     trans_acts = mx.nd.array(trans_acts, ctx=ctx)
     pred_acts = mx.nd.array(pred_acts, ctx=ctx)
-    lengths = mx.nd.array([trans_acts.shape[1]] * trans_acts.shape[0], ctx=ctx)
-    label_lengths = mx.nd.array([len(l) for l in labels], ctx=ctx)
-    labels = mx.nd.array(labels, ctx=ctx)
+    lengths = mx.nd.array([trans_acts.shape[1]] * trans_acts.shape[0], dtype='int32', ctx=ctx)
+    label_lengths = mx.nd.array([len(l) for l in labels], dtype='int32', ctx=ctx)
+    labels = mx.nd.array(labels, dtype='int32', ctx=ctx)
     fn = RNNTLoss(blank_label=blank) if args.mx else rnntloss(blank_label=blank)
     with mx.autograd.record():
         trans_acts.attach_grad()

@@ -78,75 +78,9 @@ inline void get_workspace_size(int maxT, int maxU,
     if (gpu) {
         // forward-backward loglikelihood
         per_minibatch_bytes += sizeof(float) * 2;
-        // labels
-        per_minibatch_bytes += sizeof(int) * (maxU - 1);
-        // length
-        per_minibatch_bytes += sizeof(int) * 2;
     }
 
     *size_bytes = per_minibatch_bytes * minibatch;
-}
-
-// Takes a tensor of labels, and interprets 0-elements at the end of the vector
-// as padding. The tensor is packed into an std::vector without padding
-// characters. The label sequence lengths are also inferred from the padding chars.
-// When cudnn is enabled, the return value signifies whether the cudnn length limit is exceeded.
-template <typename DType, typename xpu>
-inline bool LabelTensorToPackedVector(mshadow::Tensor<xpu, 2, DType> labels,
-                                      int padding_mask,
-                                      std::vector<int> *packed_labels,
-                                      std::vector<int> *label_lengths) {
-  int batch = labels.size(0);
-  int max_num_labels = labels.size(1);
-  bool exceed_limit = false;
-
-  std::vector<int> cpu_labels(max_num_labels*batch);
-  mshadow::Tensor<xpu, 1, DType> flat_labels = labels.FlatTo1D();
-  IndexTensorToVector(flat_labels, &cpu_labels);
-
-  for (int b = 0; b < batch; ++b) {
-    auto start = cpu_labels.data()+b*max_num_labels;
-    auto res = std::find(start, start+max_num_labels, padding_mask);
-    int len = std::distance(start, res);
-#if defined(__CUDACC__) && MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
-    exceed_limit = exceed_limit || len > CUDNN_LABEL_LENGTH_LIMIT;
-#endif
-    std::copy(start, start + len,
-              std::back_inserter(*packed_labels));
-    label_lengths->at(b) = len;
-  }
-  return exceed_limit;
-}
-
-// Takes a tensor of labels, and a vector which specifies the actual length of each label
-// The tensor is packed into an std::vector without padding characters.
-// The label length vector is copied into an std::vector.
-// When cudnn is enabled, the return value signifies whether the cudnn length limit is exceeded.
-template <typename DType, typename xpu>
-inline bool PackLabelByLength(mshadow::Tensor<xpu, 2, DType> labels,
-                              mshadow::Tensor<xpu, 1, DType> in_label_lengths,
-                              std::vector<int> *packed_labels,
-                              std::vector<int> *label_lengths) {
-  int batch = labels.size(0);
-  int max_num_labels = labels.size(1);
-  bool exceed_limit = false;
-
-  IndexTensorToVector(in_label_lengths, label_lengths);
-
-  std::vector<int> cpu_labels(max_num_labels*batch);
-  mshadow::Tensor<xpu, 1, DType> flat_labels = labels.FlatTo1D();
-  IndexTensorToVector(flat_labels, &cpu_labels);
-
-  for (int b = 0; b < batch; ++b) {
-    auto start = cpu_labels.data()+b*max_num_labels;
-    int len = label_lengths->at(b);
-#if defined(__CUDACC__) && MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
-    exceed_limit = exceed_limit || len > CUDNN_LABEL_LENGTH_LIMIT;
-#endif
-    std::copy(start, start + len,
-              std::back_inserter(*packed_labels));
-  }
-  return exceed_limit;
 }
 
 struct RNNTLossParam : public dmlc::Parameter<RNNTLossParam> {
@@ -185,6 +119,12 @@ class RNNTLossOp : public Operator {
         in_data[rnnt_loss::kTrans].get<xpu, 3, real_t>(s);
     Tensor<xpu, 3, real_t> pred_acts = 
         in_data[rnnt_loss::kPred].get<xpu, 3, real_t>(s);
+    Tensor<xpu, 2, int32_t> labels = 
+        in_data[rnnt_loss::kLabel].get<xpu, 2, int32_t>(s);
+    Tensor<xpu, 1, int32_t> input_length = 
+        in_data[rnnt_loss::kInputLength].get<xpu, 1, int32_t>(s);
+    Tensor<xpu, 1, int32_t> label_length = 
+        in_data[rnnt_loss::kLabelLength].get<xpu, 1, int32_t>(s);
 
     Tensor<xpu, 1, real_t> costs =
         out_data[rnnt_loss::kOut].get<xpu, 1, real_t>(s);
@@ -196,17 +136,6 @@ class RNNTLossOp : public Operator {
     int batch_size = static_cast<int>(trans_acts.size(0));
     int maxT = static_cast<int>(trans_acts.size(1));
     int maxU = static_cast<int>(pred_acts.size(1));
-
-    // data_lengths
-    std::vector<int> data_lengths(batch_size, maxT);
-    IndexTensorToVector(in_data[rnnt_loss::kInputLength].get<xpu, 1, real_t>(s), &data_lengths);
-
-    // label
-    std::vector<int> labels(batch_size, maxU - 1);
-    IndexTensorToVector(in_data[rnnt_loss::kLabel].get<xpu, 2, real_t>(s).FlatTo1D(), &labels);
-    // label_lengths
-    std::vector<int> label_lengths(batch_size);
-    IndexTensorToVector(in_data[rnnt_loss::kLabelLength].get<xpu, 1, real_t>(s), &label_lengths);
 
     // allocate temporary workspace
     size_t size_bytes = 0;
@@ -221,8 +150,8 @@ class RNNTLossOp : public Operator {
             Shape1(num_tmp_elems), s);
 
     compute_rnnt_cost(trans_acts, pred_acts, costs.dptr_, 
-                     trans_grad.dptr_, pred_grad.dptr_, labels.data(),
-                     label_lengths.data(), data_lengths.data(),
+                     trans_grad.dptr_, pred_grad.dptr_, labels.dptr_,
+                     label_length.dptr_, input_length.dptr_,
                      workspace.dptr_, req[rnnt_loss::kTransGrad] != mxnet::kNullOp,
                      param_.blank_label);
 
@@ -251,7 +180,6 @@ class RNNTLossOp : public Operator {
         out_data[rnnt_loss::kTransGrad].get<xpu, 3, real_t>(s);
     Tensor<xpu, 3, real_t> pred_grad_computed = 
         out_data[rnnt_loss::kPredGrad].get<xpu, 3, real_t>(s);
-
     Assign(trans_grad, req[rnnt_loss::kTrans],
            mshadow::expr::broadcast<0>(output_grad, trans_grad.shape_) * trans_grad_computed);
     Assign(pred_grad, req[rnnt_loss::kPred],
@@ -327,6 +255,34 @@ class RNNTLossProp : public OperatorProperty {
     out_shape->push_back(oshape);
     out_shape->push_back(tshape);  // trans_grad output
     out_shape->push_back(pshape);  // pred_grad output
+    return true;
+  }
+
+  bool InferType(std::vector<int> *in_type, std::vector<int> *out_type,
+                    std::vector<int> *aux_type) const override {
+    // trans_acts, pred_acts, labels, input_length, label_length
+    CHECK_LE(in_type->size(), this->ListArguments().size());
+    int n_in = this->ListArguments().size();
+    for (unsigned i = 0; i < in_type->size(); ++i) {
+        auto type = mshadow::default_type_flag;
+        if (i >= 2) type = mshadow::kInt32;
+        CHECK(in_type->at(i) == type ||
+            in_type->at(i) == -1) << "Unsupported data type " << in_type->at(i);
+    }
+    in_type->clear();
+    for (int i = 0; i < n_in; ++i ) {
+        auto type = mshadow::default_type_flag;
+        if (i >= 2) type = mshadow::kInt32;
+        in_type->push_back(type);
+    }
+
+    int n_out = this->ListOutputs().size();
+    out_type->clear();
+    for (int i = 0; i < n_out; ++i ) out_type->push_back(mshadow::default_type_flag);
+
+    int n_aux = this->ListAuxiliaryStates().size();
+    aux_type->clear();
+    for (int i = 0; i < n_aux; ++i ) aux_type->push_back(mshadow::default_type_flag);
     return true;
   }
 
