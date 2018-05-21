@@ -25,26 +25,32 @@
 */
 
 #include "./rnnt_loss-inl.h"
-#include "./rnnt_include/detail/cpu_rnnt.h"
+#include "./rnnt_include/detail/cpu_transducer.h"
 
 namespace mshadow {
 
 template <typename DType>
-void compute_rnnt_cost(DType *trans_acts, DType *pred_acts, DType *costs, 
+void compute_rnnt_cost(const Tensor<gpu, 3, DType> trans_acts, 
+                      const Tensor<gpu, 3, DType> pred_acts, DType *costs, 
                       DType *trans_grads, DType *pred_grads, int *labels,
                       int *label_lengths, int *data_lengths,
-                      void *workspace, int train, int blank_label,
-                      int minibatch, int maxT, int maxU, int alphabet_size) {
+                      void *workspace, int train, int blank_label) {
 
-  GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  int minibatch = static_cast<int>(trans_acts.size(0));
+  int maxT = static_cast<int>(trans_acts.size(1));
+  int alphabet_size = static_cast<int>(trans_acts.size(2));
+  int maxU = static_cast<int>(pred_acts.size(1));
+
+  GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, 
+                    blank_label, trans_acts.stream_->stream_);
   if (train) {
-    rnnt.cost_and_grad(trans_acts, pred_acts, 
+    rnnt.cost_and_grad(trans_acts.dptr_, pred_acts.dptr_, 
                         trans_grads, pred_grads,
                         costs, 
                         labels, label_lengths, 
                         data_lengths);
   } else {
-    rnnt.score_forward(trans_acts, pred_acts, 
+    rnnt.score_forward(trans_acts.dptr_, pred_acts.dptr_, 
                         costs, 
                         labels, label_lengths, 
                         data_lengths);

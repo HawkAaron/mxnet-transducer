@@ -60,9 +60,8 @@ inline void get_workspace_size(int maxT, int maxU,
 {
     if (minibatch <= 0 ||
         maxT <= 0 ||
-        maxU <= 0 ||
-        alphabet_size <= 0)
-        return RNNT_STATUS_INVALID_VALUE;
+        maxU <= 0)
+        return ;
 
     *size_bytes = 0;
 
@@ -186,32 +185,32 @@ class RNNTLossOp : public Operator {
         in_data[rnnt_loss::kTrans].get<xpu, 3, real_t>(s);
     Tensor<xpu, 3, real_t> pred_acts = 
         in_data[rnnt_loss::kPred].get<xpu, 3, real_t>(s);
-    Tensor<xpu, 2, real_t> labels =
-        in_data[rnnt_loss::kLabel].get<xpu, 2, real_t>(s);
 
     Tensor<xpu, 1, real_t> costs =
         out_data[rnnt_loss::kOut].get<xpu, 1, real_t>(s);
     Tensor<xpu, 3, real_t> trans_grad =
         out_data[rnnt_loss::kTransGrad].get<xpu, 3, real_t>(s);
     Tensor<xpu, 3, real_t> pred_grad = 
-        out_data[rnnt_loss:kPredGrad].get<xpu, 3, real_t>(s);
+        out_data[rnnt_loss::kPredGrad].get<xpu, 3, real_t>(s);
 
     int batch_size = static_cast<int>(trans_acts.size(0));
     int maxT = static_cast<int>(trans_acts.size(1));
-    int alphabet_size = static_cast<int>(trans_acts.size(2));
     int maxU = static_cast<int>(pred_acts.size(1));
 
     // data_lengths
     std::vector<int> data_lengths(batch_size, maxT);
-    IndexTensorToVector(in_data[kInputLength].get<xpu, 1, real_t>(s), &data_lengths);
+    IndexTensorToVector(in_data[rnnt_loss::kInputLength].get<xpu, 1, real_t>(s), &data_lengths);
 
+    // label
+    std::vector<int> labels(batch_size, maxU - 1);
+    IndexTensorToVector(in_data[rnnt_loss::kLabel].get<xpu, 2, real_t>(s).FlatTo1D(), &labels);
     // label_lengths
     std::vector<int> label_lengths(batch_size);
-    IndexTensorToVector(in_data[kLabelLength].get<xpu, 1, real_t>(s), &label_lengths);
+    IndexTensorToVector(in_data[rnnt_loss::kLabelLength].get<xpu, 1, real_t>(s), &label_lengths);
 
     // allocate temporary workspace
-    size_t size_bytes;
-    bool gpu = data.kDevCPU ? false : true;
+    size_t size_bytes = 0;
+    bool gpu = trans_acts.kDevCPU ? false : true;
 
     get_workspace_size<real_t>(maxT, maxU, batch_size, gpu, &size_bytes);
 
@@ -221,11 +220,11 @@ class RNNTLossOp : public Operator {
         ctx.requested[rnnt_loss::kTempSpace].get_space_typed<xpu, 1, real_t>(
             Shape1(num_tmp_elems), s);
 
-    compute_rnnt_cost(trans_acts.dptr_, pred_acts.dptr_, costs.dptr_, 
-                     trans_grad.dptr_, pred_acts.dptr_, labels.dptr_,
+    compute_rnnt_cost(trans_acts, pred_acts, costs.dptr_, 
+                     trans_grad.dptr_, pred_grad.dptr_, labels.data(),
                      label_lengths.data(), data_lengths.data(),
-                     workspace.dptr_, req[rnnt_loss::kGrad] != mxnet::kNullOp,
-                     param_.blank_label, batch_size, maxT, maxU, alphabet_size);
+                     workspace.dptr_, req[rnnt_loss::kTransGrad] != mxnet::kNullOp,
+                     param_.blank_label);
 
   }
 
@@ -312,12 +311,12 @@ class RNNTLossProp : public OperatorProperty {
     CHECK_EQ(tshape[2], pshape[2])
         << "The alphabet size for the trans_acts and pred_acts must be the same.";
 
-    const TShape &dlshape = (*in_shape)[kInputLength];
+    const TShape &dlshape = (*in_shape)[rnnt_loss::kInputLength];
     CHECK_EQ(dlshape.ndim(), 1U) << "Data length array must be a vector.";
     CHECK_EQ(dlshape[0], tshape[0])
         << "The batch size for the data and data lengths must be the same.";
 
-    const TShape &llshape = (*in_shape)[kLabelLength];
+    const TShape &llshape = (*in_shape)[rnnt_loss::kLabelLength];
     CHECK_EQ(llshape.ndim(), 1U) << "Label length array must be a vector.";
     CHECK_EQ(llshape[0], lshape[0])
         << "The batch size for the labels and label lengths must be the same.";
@@ -348,7 +347,7 @@ class RNNTLossProp : public OperatorProperty {
       const std::vector<int> &out_grad, const std::vector<int> &in_data,
       const std::vector<int> &out_data) const override {
     return {out_grad[rnnt_loss::kOut], out_data[rnnt_loss::kTransGrad],
-            out_data[rnnt_loss:kPredGrad]};
+            out_data[rnnt_loss::kPredGrad]};
   }
 
   Operator *CreateOperator(Context ctx) const override {

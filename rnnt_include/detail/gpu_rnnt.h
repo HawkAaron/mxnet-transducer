@@ -8,10 +8,6 @@
 #include <numeric>
 #include <chrono>
 
-#if !defined(RNNT_DISABLE_OMP) && !defined(APPLE)
-#include <omp.h>
-#endif
-
 #include "reduce.h"
 #include "gpu_rnnt_kernel.h"
 
@@ -19,25 +15,16 @@ template<typename ProbT>
 class GpuRNNT {
 public:
     // Noncopyable
-    GpuRNNT(int minibatch, int maxT, int maxU, int alphabet_size, void* workspace, 
-            int blank, int num_threads, CUstream stream) :
+    GpuRNNT(int minibatch, int maxT, int maxU, int alphabet_size, void* workspace, int blank, CUstream stream) :
         minibatch_(minibatch), maxT_(maxT), maxU_(maxU), alphabet_size_(alphabet_size), 
-        gpu_workspace(workspace), blank_(blank), num_threads_(num_threads), stream_(stream) {
-#if defined(RNNT_DISABLE_OMP) || defined(APPLE)
-#else
-        if (num_threads > 0) {
-            omp_set_num_threads(num_threads);
-        } else {
-            num_threads_ = omp_get_max_threads();
-        }
-#endif
+        gpu_workspace(workspace), blank_(blank), stream_(stream) {
+
     };
 
     GpuRNNT(const GpuRNNT&) = delete;
     GpuRNNT& operator=(const GpuRNNT&) = delete;
 
     void log_softmax(const ProbT* const trans_acts, const ProbT* const pred_acts, ProbT* denom);
-    void log_softmax_cpu(const ProbT* const trans_acts, const ProbT* const pred_acts, ProbT* denom);
 
     rnntStatus_t compute_cost_and_score(ProbT* const trans_acts,
                                         ProbT* const pred_acts,
@@ -71,7 +58,6 @@ private:
     int alphabet_size_; // Number of characters plus blank
     void* gpu_workspace;
     int blank_;
-    int num_threads_;
     CUstream stream_;
     
 };
@@ -83,26 +69,6 @@ GpuRNNT<ProbT>::log_softmax(const ProbT* const ft, const ProbT* const gu, ProbT*
     // trans_acts + pred_acts -> log_softmax denominator
     reduce_max(ft, gu, denom, alphabet_size_, minibatch_ * maxT_ * maxU_, maxT_, maxU_, 0, stream_);
     reduce_exp(ft, gu, denom, alphabet_size_, minibatch_ * maxT_ * maxU_, maxT_, maxU_, 1, stream_);
-    // for (int mb = 0; mb < minibatch_; ++mb) {
-    //     for (int t = 0; t < maxT_; ++t) {
-    //         for (int u = 0; u < maxU_; ++u) {
-    //             int t_offset = (mb * maxT_ + t)* alphabet_size_;
-    //             int u_offset = (mb * maxU_ + u) * alphabet_size_;
-    //             ProbT max_activation = neg_inf<ProbT>();
-
-    //             for (int v = 0; v < alphabet_size_; ++v)
-    //                 max_activation = std::max(max_activation, ft[v + t_offset] + gu[v + u_offset]);
-                
-    //             ProbT de = ProbT(0.);
-    //             for (int v = 0; v < alphabet_size_; ++v) {
-    //                 de += std::exp(ft[v + t_offset] + gu[v + u_offset] - max_activation);
-    //             }
-
-    //             // here only store denominator
-    //             denom[(mb * maxT_ + t) * maxU_ + u] = -max_activation - std::log(de);
-    //         }
-    //     }
-    // }
 }
 
 template<typename ProbT>

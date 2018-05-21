@@ -10,6 +10,9 @@
 
 #include <dmlc/omp.h>
 
+#include "rnnt.h"
+#include "rnnt_helper.h"
+
 template<typename ProbT>
 class CpuRNNT {
 public:
@@ -100,10 +103,10 @@ CpuRNNT<ProbT>::CpuRNNT_metadata::CpuRNNT_metadata(int T, int U, void* workspace
     
     alphas = reinterpret_cast<ProbT *>(static_cast<char *>(workspace) + bytes_used);
     bytes_used += sizeof(ProbT) * T * U;
-    std::fill(alphas, alphas + T * U, neg_inf<ProbT>());
+    std::fill(alphas, alphas + T * U, rnnt_helper::neg_inf<ProbT>());
     betas = reinterpret_cast<ProbT *>(static_cast<char *>(workspace) + bytes_used);
     bytes_used += sizeof(ProbT) * T * U;
-    std::fill(betas, betas + T * U, neg_inf<ProbT>());
+    std::fill(betas, betas + T * U, rnnt_helper::neg_inf<ProbT>());
 }
 
 template<typename ProbT>
@@ -138,7 +141,7 @@ CpuRNNT<ProbT>::log_softmax(const ProbT* const trans_acts, const ProbT* const pr
             for (int u = 0; u < maxU_; ++u) {
                 int t_offset = (mb * maxT_ + t) * alphabet_size_;
                 int u_offset = (mb * maxU_ + u) * alphabet_size_;
-                ProbT max_activation = neg_inf<ProbT>();
+                ProbT max_activation = rnnt_helper::neg_inf<ProbT>();
 
                 for (int v = 0; v < alphabet_size_; ++v)
                     max_activation = std::max(max_activation, trans_acts[v + t_offset] + pred_acts[v + u_offset]);
@@ -217,7 +220,7 @@ CpuRNNT<ProbT>::compute_alphas(CpuRNNT_logProbs& logp, int T, int U,
             if (t > 0 && u > 0) {
                 ProbT no_emit = alphas[idx(t-1, u)] + logp(t-1, u, blank_);
                 ProbT emit = alphas[idx(t, u-1)] + logp(t, u-1, labels[u-1]);
-                alphas[idx(t, u)] = log_sum_exp<ProbT>(emit, no_emit);
+                alphas[idx(t, u)] = rnnt_helper::log_sum_exp<ProbT>(emit, no_emit);
             }
             // printf("%f ", alphas[idx(t, u)]);
         }
@@ -256,7 +259,7 @@ CpuRNNT<ProbT>::compute_betas_and_grad(ProbT* trans_grad, ProbT* pred_grad,
             if (t < T-1 && u < U-1) {
                 ProbT no_emit = betas[idx(t+1, u)] + logp(t, u, blank_);
                 ProbT emit = betas[idx(t, u+1)] + logp(t, u, labels[u]);
-                betas[idx(t, u)] = log_sum_exp<ProbT>(emit, no_emit);
+                betas[idx(t, u)] = rnnt_helper::log_sum_exp<ProbT>(emit, no_emit);
             }
             // grad
             for (int v = 0; v < alphabet_size_; ++v) {
