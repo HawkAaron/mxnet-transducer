@@ -8,6 +8,7 @@
 #include <numeric>
 #include <chrono>
 
+#include "rnnt.h"
 #include "reduce.h"
 #include "gpu_rnnt_kernel.h"
 
