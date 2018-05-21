@@ -10,6 +10,7 @@ git clone https://github.com/HawkAaron/mxnet-transducer
 
 Copy all files into mxnet dir:
 ``` bash
+cd mxnet-transducer; git checkout add_network; cd ..
 cp -r mxnet-transducer/rnnt* incubator-mxnet/src/operator/contrib/
 ```
 
