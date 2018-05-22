@@ -1,7 +1,7 @@
 # mxnet-transducer
 A fast parallel implementation of RNN Transducer, on both CPU and GPU for mxnet.
 
-## Install
+## Install and Test
 First get mxnet and the code:
 ``` bash
 git clone --recursive https://github.com/apache/incubator-mxnet
@@ -15,12 +15,12 @@ cp -r mxnet-transducer/rnnt* incubator-mxnet/src/operator/contrib/
 ```
 
 Then follow the installation instructions of mxnet:
-```
+``` bash
 https://mxnet.incubator.apache.org/install/index.html
 ```
 
 Finally, add python API into `/mxnet_package_root/mxnet/gluon/loss.py`:
-```
+``` python
 class RNNTLoss(Loss):
     def __init__(self, layout='NTC', label_layout='NT', blank_label=0, weight=None, **kwargs):
         assert layout in ['NTC', 'TNC'],\
@@ -43,6 +43,11 @@ class RNNTLoss(Loss):
         loss = F.contrib.RNNTLoss(trans_acts, pred_acts, label, 
             pred_lengths, label_lengths, blank_label=self.blank_label)
         return loss
+```
+
+From the repo test with:
+``` bash
+python test/test.py 10 300 100 10000 --mx
 ```
 
 ## Reference
