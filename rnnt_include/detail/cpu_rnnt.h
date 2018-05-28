@@ -28,8 +28,8 @@ public:
 
     void log_softmax(const ProbT* const trans_acts, const ProbT* const pred_acts, ProbT* denom);
 
-    rnntStatus_t cost_and_grad(ProbT* const trans_acts,
-                              ProbT* const pred_acts,
+    rnntStatus_t cost_and_grad(const ProbT* const trans_acts,
+                              const ProbT* const pred_acts,
                               ProbT* trans_grad,
                               ProbT* pred_grad,
                               ProbT* costs,
@@ -37,8 +37,8 @@ public:
                               const int* const label_lengths,
                               const int* const input_lengths);
     
-    rnntStatus_t score_forward(ProbT* const trans_acts,
-                              ProbT* const pred_acts,
+    rnntStatus_t score_forward(const ProbT* const trans_acts,
+                              const ProbT* const pred_acts,
                               ProbT* costs,
                               const int* const flat_labels,
                               const int* const label_lengths,
