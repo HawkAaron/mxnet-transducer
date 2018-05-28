@@ -11,10 +11,10 @@ namespace rnnt_helper {
 static const float threshold = 1e-1;
 
 template<typename T>
-inline __host__ __device__ T neg_inf() { return -T(INFINITY); }
+inline HOSTDEVICE T neg_inf() { return -T(INFINITY); }
 
 template<typename T>
-inline __host__ __device__ T log_sum_exp(T a, T b) {
+inline HOSTDEVICE T log_sum_exp(T a, T b) {
     if (a == neg_inf<T>()) return b;
     if (b == neg_inf<T>()) return a;
     if (a > b)
