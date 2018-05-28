@@ -25,26 +25,27 @@
 */
 
 #include "./rnnt_loss-inl.h"
-#include "./rnnt_include/detail/cpu_transducer.h"
+#include "./rnnt_include/detail/gpu_rnnt.h"
 
 namespace mshadow {
 
 template <typename DType>
-void compute_rnnt_cost(const Tensor<cpu, 4, DType> activations, // BTUV
+void compute_rnnt_cost(const Tensor<gpu, 4, DType> acts, // BTUV
                              DType *costs, DType *grads, int *labels,
                              int *label_lengths, int *data_lengths,
                              void *workspace, int train, int blank_label) {
-  int minibatch = static_cast<int>(activations.size(0));
-  int maxT = static_cast<int>(activations.size(1));
-  int maxU = static_cast<int>(activations.size(2));
-  int alphabet_size = static_cast<int>(activations.size(3));
+  int minibatch = static_cast<int>(acts.size(0));
+  int maxT = static_cast<int>(acts.size(1));
+  int maxU = static_cast<int>(acts.size(2));
+  int alphabet_size = static_cast<int>(acts.size(3));
 
-  mxnet_warprnnt::CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, 
+                      blank_label, acts.stream_->stream_);
   if (train) {
-    rnnt.cost_and_grad(activations.dptr_, grads, costs, labels,
+    rnnt.cost_and_grad(acts.dptr_, grads, costs, labels,
                              label_lengths, data_lengths);
   } else {
-    rnnt.score_forward(activations.dptr_, costs, labels, label_lengths,
+    rnnt.score_forward(acts.dptr_, costs, labels, label_lengths,
                              data_lengths);
   }
 }
@@ -55,7 +56,7 @@ namespace mxnet {
 namespace op {
 template<>
 Operator *CreateOp<gpu>(RNNTLossParam param, int dtype) {
-  return new RNNTLossOp<cpu>(param);
+  return new RNNTLossOp<gpu>(param);
 }
 
 }  // namespace op

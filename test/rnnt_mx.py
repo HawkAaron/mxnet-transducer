@@ -18,8 +18,7 @@ class RNNTLoss(gluon.loss.Loss):
             pred = F.moveaxis(pred, 0, 2)
         if self._batch_axis == 1:
             label = F.swapaxes(label, 0, 1)
-        cpu = mx.cpu()
-        loss = F.contrib.RNNTLoss(pred.as_in_context(cpu), label.as_in_context(cpu), 
-            pred_lengths.as_in_context(cpu), label_lengths.as_in_context(cpu),
-                        blank_label=self.blank_label)
+
+        loss = F.contrib.RNNTLoss(pred, label, pred_lengths, 
+                        label_lengths, blank_label=self.blank_label)
         return loss

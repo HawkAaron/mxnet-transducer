@@ -25,7 +25,7 @@
 */
 
 #include "./rnnt_loss-inl.h"
-#include "./rnnt_include/detail/cpu_transducer.h"
+#include "./rnnt_include/detail/cpu_rnnt.h"
 
 namespace mshadow {
 
@@ -39,7 +39,7 @@ void compute_rnnt_cost(const Tensor<cpu, 4, DType> activations, // BTUV
   int minibatch = static_cast<int>(activations.size(2));
   int alphabet_size = static_cast<int>(activations.size(3));
 
-  mxnet_warprnnt::CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
   if (train) {
     rnnt.cost_and_grad(activations.dptr_, grads, costs, labels, label_lengths, data_lengths);
   } else {

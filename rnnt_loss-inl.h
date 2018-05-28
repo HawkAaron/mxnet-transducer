@@ -47,91 +47,36 @@ namespace mxnet {
 namespace op {
 
 namespace rnnt_loss {
-enum RNNTLossOpInputs { kData, kLabel };
+enum RNNTLossOpInputs { kData, kLabel, kInputLength, kLabelLength };
 enum RNNTLossOpOutputs { kOut, kGrad };
 enum RNNTLossOpForwardResource { kTempSpace };
 }
 
 template <typename T>
 inline void get_workspace_size(int maxT, int maxU,
-                               int minibatch, bool gpu,
-                               size_t *size_bytes) {
+                               int minibatch,
+                               bool gpu,
+                               size_t* size_bytes)
+{
+    *size_bytes = 0;
 
-  *size_bytes = 0;
+    // per minibatch memory
+    size_t per_minibatch_bytes = 0;
 
-  // cpu can eventually replace all minibatch with
-  // max number of concurrent threads if memory is
-  // really tight
+    // alphas & betas
+    per_minibatch_bytes += sizeof(float) * maxT * maxU * 2;
 
-  // per minibatch memory
-  size_t per_minibatch_bytes = 0;
+    if (!gpu) {
+        // blank & label log probability cache
+        per_minibatch_bytes += sizeof(float) * maxT * maxU * 2;
+    } else {
+        // softmax denominator
+        per_minibatch_bytes += sizeof(float) * maxT * maxU;
+        // forward-backward loglikelihood
+        per_minibatch_bytes += sizeof(float) * 2;
+    }
 
-  // alphas & betas
-  per_minibatch_bytes += sizeof(T) * maxT * maxU * 2;
-
-  *size_bytes = per_minibatch_bytes * minibatch;
-}
-
-// Takes a tensor of labels, and interprets 0-elements at the end of the vector
-// as padding. The tensor is packed into an std::vector without padding
-// characters. The label sequence lengths are also inferred from the padding chars.
-// When cudnn is enabled, the return value signifies whether the cudnn length limit is exceeded.
-template <typename DType, typename xpu>
-inline bool LabelTensorToPackedVector(mshadow::Tensor<xpu, 2, DType> labels,
-                                      int padding_mask,
-                                      std::vector<int> *packed_labels,
-                                      std::vector<int> *label_lengths) {
-  int batch = labels.size(0);
-  int max_num_labels = labels.size(1);
-  bool exceed_limit = false;
-
-  std::vector<int> cpu_labels(max_num_labels*batch);
-  mshadow::Tensor<xpu, 1, DType> flat_labels = labels.FlatTo1D();
-  IndexTensorToVector(flat_labels, &cpu_labels);
-
-  for (int b = 0; b < batch; ++b) {
-    auto start = cpu_labels.data()+b*max_num_labels;
-    auto res = std::find(start, start+max_num_labels, padding_mask);
-    int len = std::distance(start, res);
-#if defined(__CUDACC__) && MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
-    exceed_limit = exceed_limit || len > CUDNN_LABEL_LENGTH_LIMIT;
-#endif
-    std::copy(start, start + len,
-              std::back_inserter(*packed_labels));
-    label_lengths->at(b) = len;
-  }
-  return exceed_limit;
-}
-
-// Takes a tensor of labels, and a vector which specifies the actual length of each label
-// The tensor is packed into an std::vector without padding characters.
-// The label length vector is copied into an std::vector.
-// When cudnn is enabled, the return value signifies whether the cudnn length limit is exceeded.
-template <typename DType, typename xpu>
-inline bool PackLabelByLength(mshadow::Tensor<xpu, 2, DType> labels,
-                              mshadow::Tensor<xpu, 1, DType> in_label_lengths,
-                              std::vector<int> *packed_labels,
-                              std::vector<int> *label_lengths) {
-  int batch = labels.size(0);
-  int max_num_labels = labels.size(1);
-  bool exceed_limit = false;
-
-  IndexTensorToVector(in_label_lengths, label_lengths);
-
-  std::vector<int> cpu_labels(max_num_labels*batch);
-  mshadow::Tensor<xpu, 1, DType> flat_labels = labels.FlatTo1D();
-  IndexTensorToVector(flat_labels, &cpu_labels);
-
-  for (int b = 0; b < batch; ++b) {
-    auto start = cpu_labels.data()+b*max_num_labels;
-    int len = label_lengths->at(b);
-#if defined(__CUDACC__) && MXNET_USE_CUDNN == 1 && CUDNN_MAJOR >= 7
-    exceed_limit = exceed_limit || len > CUDNN_LABEL_LENGTH_LIMIT;
-#endif
-    std::copy(start, start + len,
-              std::back_inserter(*packed_labels));
-  }
-  return exceed_limit;
+    *size_bytes = per_minibatch_bytes * minibatch;
 }
 
 struct RNNTLossParam : public dmlc::Parameter<RNNTLossParam> {
@@ -139,14 +84,7 @@ struct RNNTLossParam : public dmlc::Parameter<RNNTLossParam> {
   DMLC_DECLARE_PARAMETER(RNNTLossParam) {
     DMLC_DECLARE_FIELD(blank_label)
       .set_default(0)
-      .describe("Set the label that is reserved for blank label."
-                "If \"first\", 0-th label is reserved, and "
-                "label values for tokens in the vocabulary are "
-                "between ``1`` and ``alphabet_size-1``, and the padding mask is ``-1``. "
-                "If \"last\", last label value ``alphabet_size-1`` "
-                "is reserved for blank label instead, "
-                "and label values for tokens in the vocabulary are "
-                "between ``0`` and ``alphabet_size-2``, and the padding mask is ``0``.");
+      .describe("Set the label that is reserved for blank label.");
   }
 };
 
@@ -175,30 +113,21 @@ class RNNTLossOp : public Operator {
 
     Tensor<xpu, 4, real_t> data =
         in_data[rnnt_loss::kData].get<xpu, 4, real_t>(s);
-    Tensor<xpu, 2, real_t> labels =
-        in_data[rnnt_loss::kLabel].get<xpu, 2, real_t>(s);
+    Tensor<xpu, 2, int32_t> labels =
+        in_data[rnnt_loss::kLabel].get<xpu, 2, int32_t>(s);
+    Tensor<xpu, 1, int32_t> input_length = 
+        in_data[rnnt_loss::kInputLength].get<xpu, 1, int32_t>(s);
+    Tensor<xpu, 1, int32_t> label_length = 
+        in_data[rnnt_loss::kLabelLength].get<xpu, 1, int32_t>(s);
 
     Tensor<xpu, 1, real_t> costs =
         out_data[rnnt_loss::kOut].get<xpu, 1, real_t>(s);
     Tensor<xpu, 4, real_t> grad =
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
-    int maxT = static_cast<int>(data.size(0));
-    int maxU = static_cast<int>(data.size(1));
-    int batch_size = static_cast<int>(data.size(2));
-
-    // data_lengths
-    std::vector<int> data_lengths(batch_size, maxT);
-    int kInputLength = 2;
-    IndexTensorToVector(in_data[kInputLength].get<xpu, 1, real_t>(s), &data_lengths);
-
-    // label_lengths
-    std::vector<int> packed_labels;
-    std::vector<int> label_lengths(batch_size);
-
-    int kLabelLength = 3;
-    exceed_cudnn_limit = PackLabelByLength(labels, in_data[kLabelLength].get<xpu, 1, real_t>(s),
-                                            &packed_labels, &label_lengths);
+    int batch_size = static_cast<int>(data.size(0));
+    int maxT = static_cast<int>(data.size(1));
+    int maxU = static_cast<int>(data.size(2));
 
     // allocate temporary workspace
     size_t size_bytes;
@@ -212,8 +141,8 @@ class RNNTLossOp : public Operator {
         ctx.requested[rnnt_loss::kTempSpace].get_space_typed<xpu, 1, real_t>(
             Shape1(num_tmp_elems), s);
 
-    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, packed_labels.data(),
-                     label_lengths.data(), data_lengths.data(),
+    compute_rnnt_cost(data, costs.dptr_, grad.dptr_, labels.dptr_,
+                     label_length.dptr_, input_length.dptr_,
                      workspace.dptr_, req[rnnt_loss::kGrad] != mxnet::kNullOp,
                      param_.blank_label);
 
@@ -240,7 +169,7 @@ class RNNTLossOp : public Operator {
         out_data[rnnt_loss::kGrad].get<xpu, 4, real_t>(s);
 
     Assign(data_grad, req[rnnt_loss::kData],
-           mshadow::expr::broadcast<2>(output_grad, data_grad.shape_) * data_grad_computed);
+           mshadow::expr::broadcast<0>(output_grad, data_grad.shape_) * data_grad_computed);
   }
 
  private:
@@ -286,23 +215,21 @@ class RNNTLossProp : public OperatorProperty {
     const TShape &lshape = (*in_shape)[rnnt_loss::kLabel];
     CHECK_EQ(dshape.ndim(), 4U) << "The data array must be of rank 4.";
     CHECK_EQ(lshape.ndim(), 2U) << "The labels array must be of rank 2.";
-    CHECK_EQ(dshape[2], lshape[0])
+    CHECK_EQ(dshape[0], lshape[0])
         << "The batch size for the labels and data arrays must be the same.";
 
-    int kInputLength = 2;
-    const TShape &dlshape = (*in_shape)[kInputLength];
+    const TShape &dlshape = (*in_shape)[rnnt_loss::kInputLength];
     CHECK_EQ(dlshape.ndim(), 1U) << "Data length array must be a vector.";
-    CHECK_EQ(dlshape[0], dshape[2])
+    CHECK_EQ(dlshape[0], dshape[0])
         << "The batch size for the data and data lengths must be the same.";
 
-    int kLabelLength = 3;
-    const TShape &llshape = (*in_shape)[kLabelLength];
+    const TShape &llshape = (*in_shape)[rnnt_loss::kLabelLength];
     CHECK_EQ(llshape.ndim(), 1U) << "Label length array must be a vector.";
     CHECK_EQ(llshape[0], lshape[0])
         << "The batch size for the labels and label lengths must be the same.";
 
     TShape oshape(1);
-    oshape[0] = dshape[2];  // batch size
+    oshape[0] = dshape[0];  // batch size
     out_shape->clear();
     out_shape->push_back(oshape);
     out_shape->push_back(dshape);  // grad output
