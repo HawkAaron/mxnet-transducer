@@ -67,7 +67,7 @@ __global__ void compute_betas_kernel(const Tp* const trans_acts, const Tp* const
 }
 
 template<int NT, typename Tp>
-__global__ void compute_grad_kernel(const Tp* const trans_grad, const Tp* const pred_grad, const Tp* const trans_acts, const Tp* const pred_acts, const Tp* const denom, const Tp* alphas, const Tp* betas, const Tp* const nll, const int* const xlen, const int* const ylen, 
+__global__ void compute_grad_kernel(Tp* const trans_grad, Tp* const pred_grad, const Tp* const trans_acts, const Tp* const pred_acts, const Tp* const denom, const Tp* alphas, const Tp* betas, const Tp* const nll, const int* const xlen, const int* const ylen, 
     const int* const mlabels, const int minibatch, const int maxT, const int maxU, const int alphabet_size, const int blank_) {
     int tid = threadIdx.x; // alphabet dim
     int idx = tid;
