@@ -14,7 +14,7 @@ class RNNTLoss(gluon.loss.Loss):
         self.blank_label = blank_label
         
     def hybrid_forward(self, F, pred, label, pred_lengths, label_lengths):
-        if self._layout == 'NTC':
+        if self._layout == 'TNC':
             pred = F.moveaxis(pred, 0, 2)
         if self._batch_axis == 1:
             label = F.swapaxes(label, 0, 1)

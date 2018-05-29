@@ -16,46 +16,49 @@ from rnnt_mx import RNNTLoss
 from rnnt_np import RNNTLoss as rnntloss
 
 parser = argparse.ArgumentParser(description='MXNet RNN Transducer Test.')
-parser.add_argument('B', type=int, default=1, help='batch size')
-parser.add_argument('T', type=int, default=300, help='time step')
-parser.add_argument('U', type=int, default=100, help='prediction step')
-parser.add_argument('V', type=int, default=60, help='vocab size')
 parser.add_argument('--mx', default=False, action='store_true')
 args = parser.parse_args()
 
 def wrap_and_call(acts, labels):
-    acts = mx.nd.array(acts)
-    lengths = mx.nd.array([acts.shape[1]] * acts.shape[0])
-    label_lengths = mx.nd.array([len(l) for l in labels])
-    labels = mx.nd.array(labels)
+    gpu = ctx == mx.gpu()
+    acts = mx.nd.array(acts, dtype='float32', ctx=ctx)
+    lengths = mx.nd.array([acts.shape[1]] * acts.shape[0], dtype='int32', ctx=ctx)
+    label_lengths = mx.nd.array([len(l) for l in labels], dtype='int32', ctx=ctx)
+    labels = mx.nd.array(labels, dtype='int32', ctx=ctx)
     fn = RNNTLoss() if args.mx else rnntloss()
     with mx.autograd.record():
-        log_probs = mx.nd.log_softmax(acts, axis=3)
-        log_probs.attach_grad()
-        costs = fn(log_probs, labels, lengths, label_lengths)
+        acts.attach_grad()
+        logits = acts if gpu and args.mx else mx.nd.log_softmax(acts, axis=3)
+        costs = fn(logits, labels, lengths, label_lengths)
         costs.backward()
-    return costs.asnumpy(), log_probs.grad.asnumpy()
+    return costs.asnumpy(), acts.grad.asnumpy()
 
 
 def small_test():
-    acts = np.array([[[0.1, 0.6, 0.1, 0.1, 0.1],
+    acts = np.array([[[[0.1, 0.6, 0.1, 0.1, 0.1],
                       [0.1, 0.1, 0.6, 0.1, 0.1],
                       [0.1, 0.1, 0.2, 0.8, 0.1]],
                      [[0.1, 0.6, 0.1, 0.1, 0.1],
                       [0.1, 0.1, 0.2, 0.1, 0.1],
-                      [0.7, 0.1, 0.2, 0.1, 0.1]]])
+                      [0.7, 0.1, 0.2, 0.1, 0.1]]]])
     labels = [[1, 2]]
-
-    acts = acts[None, ...]
 
     cost, grads = wrap_and_call(acts, labels)
     expected_cost = 4.495666
-    expected_grads = np.array([[[-0.308198071906, -0.6918019280939998, 0.0, 0.0, 0.0],
-                                [-0.308198071906, 0.0, -0.3836038561880001, 0.0, 0.0],
-                                [-0.3836038561880001, 0.0, 0.0, 0.0, 0.0]],
-                               [[0.0, -0.308198071906, 0.0, 0.0, 0.0],
-                                [0.0, 0.0, -0.6163961438119995, 0.0, 0.0],
-                                [-0.9999999999999991, 0.0, 0.0, 0.0, 0.0]]])
+    expected_grads = np.array([[[[-0.13116688, -0.3999269 ,  0.17703125,  0.17703125,
+                                0.17703125],
+                                [-0.18572757,  0.12247056, -0.18168412,  0.12247056,
+                                0.12247056],
+                                [-0.32091254,  0.06269141,  0.06928472,  0.12624499,
+                                0.06269141]],
+
+                                [[ 0.05456069, -0.21824276,  0.05456069,  0.05456069,
+                                0.05456069],
+                                [ 0.12073959,  0.12073959, -0.48295835,  0.12073959,
+                                0.12073959],
+                                [-0.6925882 ,  0.16871116,  0.18645467,  0.16871116,
+                                0.16871116]]]])
+
     assert np.allclose(cost, expected_cost, rtol=1e-6), \
         "small_test costs mismatch."
     assert np.allclose(grads, expected_grads), \
@@ -99,75 +102,55 @@ def big_test():
               [0.6607698886038497, 0.3771277082495921, 0.3580209022231813]]]]
 
     expected_costs = [4.2806528590890736, 3.9384369822503591]
-    expected_grads = [
-            [[[-0.4322264564338117, -0.5677735435661883, 0.0],
-              [-0.36565009313836844, 0.0, -0.20212345042782007],
-              [-0.20212345042782007, 0.0, 0.0]],
+    expected_grads = [[[[-1.86843902e-01, -6.25548810e-02,  2.49398798e-01],
+                        [-2.03376666e-01,  2.02399328e-01,  9.77333169e-04],
+                        [-1.41016081e-01,  7.91234672e-02,  6.18926100e-02]],
 
-             [[-0.16521672442463506, -0.2670097320091765, 0.0],
-              [-0.3943653886107811, 0.0, -0.2382944365367636],
-              [-0.44041788696458367, 0.0, 0.0]],
+                        [[-1.15517676e-02, -8.12802389e-02,  9.28319991e-02],
+                        [-1.54257029e-01,  2.29432687e-01, -7.51756504e-02],
+                        [-2.46593088e-01,  1.46404594e-01,  1.00188486e-01]],
 
-             [[-0.052129794015740985, -0.11308693040889405, 0.0],
-              [-0.18313786985332664, 0.0, -0.3243144491663483],
-              [-0.7647323361309323, 0.0, 0.0]],
+                        [[-1.29182907e-02, -6.15932420e-02,  7.45115355e-02],
+                        [-5.59857301e-02,  2.19830811e-01, -1.63845062e-01],
+                        [-4.97626871e-01,  2.09239945e-01,  2.88386941e-01]],
 
-             [[0.0, -0.052129794015740985, 0.0],
-              [0.0, 0.0, -0.23526766386906767],
-              [-1.0, 0.0, 0.0]]],
+                        [[ 1.36048580e-02, -3.02196294e-02,  1.66147724e-02],
+                        [ 1.13924511e-01,  6.27811998e-02, -1.76705718e-01],
+                        [-6.67078257e-01,  3.67658824e-01,  2.99419403e-01]]],
 
-            [[[-0.7161424128232795, -0.2838575871767207, 0.0],
-              [-0.18382932237365335, -0.10002826480306751, 0.0],
-              [-0.10002826480306751, 0.0, 0.0]],
 
-             [[-0.41121794618117213, -0.3049244666421072, 0.0],
-              [-0.3295759402552584, -0.15917784876050195, 0.0],
-              [-0.2592061135635692, 0.0, 0.0]],
+                    [[[-3.56343776e-01, -5.53474613e-02,  4.11691219e-01],
+                        [-9.69219357e-02,  2.94591039e-02,  6.74628317e-02],
+                        [-6.35175705e-02,  2.76544970e-02,  3.58630717e-02]],
 
-             [[-0.11607642141651396, -0.29514152476465827, 0.0],
-              [-0.2865333615432337, -0.3381841034766833, 0.0],
-              [-0.5973902170402529, 0.0, 0.0]],
+                        [[-1.54499024e-01, -7.39420280e-02,  2.28441030e-01],
+                        [-1.66789949e-01, -8.78955179e-05,  1.66877866e-01],
+                        [-1.72369644e-01,  1.05565332e-01,  6.68043196e-02]],
 
-             [[0.0, -0.11607642141651396, 0.0],
-              [0.0, -0.4026097829597475, 0.0],
-              [-1.0, 0.0, 0.0]]]]
+                        [[ 2.38748826e-02, -1.18255816e-01,  9.43809375e-02],
+                        [-1.04707085e-01, -1.08934477e-01,  2.13641584e-01],
+                        [-3.69844258e-01,  1.80118099e-01,  1.89726159e-01]],
+
+                        [[ 2.57137045e-02, -7.94617534e-02,  5.37480488e-02],
+                        [ 1.22328237e-01, -2.38788679e-01,  1.16460443e-01],
+                        [-5.98686993e-01,  3.02203178e-01,  2.96483815e-01]]]]
 
     activations = np.array(activations)
     labels = [[1, 2],
               [1, 1]]
 
     costs, grads = wrap_and_call(activations, labels)
-    assert np.allclose(costs, expected_costs), \
+    assert np.allclose(costs, expected_costs, 1e-4), \
         "big_test average costs mismatch."
 
-    assert np.allclose(grads, expected_grads), \
+    assert np.allclose(grads, expected_grads, 1e-3), \
         "big_test grads for average cost mismatch."
 
-def time_test(blank=0):
-    batch_size = args.B
-    vocab_size = args.V
-    input_len = args.T
-    output_len = args.U
-    acts = np.random.rand(batch_size, input_len, output_len + 1, vocab_size)
-    labels = np.random.randint(1, vocab_size, (batch_size, output_len))
-
-    acts = mx.nd.array(acts)
-    lengths = mx.nd.array([acts.shape[1]] * acts.shape[0])
-    label_lengths = mx.nd.array([len(l) for l in labels])
-    labels = mx.nd.array(labels)
-    log_probs = mx.nd.log_softmax(acts, axis=3)
-
-    start = time.time()
-    iters = 10
-    for _ in range(iters):
-        cost, grad = wrap_and_call(acts, labels)
-    end = time.time()
-
-    print("Time per iteration: {:.3f}(s)".format((end-start)/iters))
-
-
 if __name__ == "__main__":
+    ctx = mx.cpu()
     small_test()
     big_test()
     print("CPU Tests passed!")
-    time_test()
+    ctx = mx.gpu()
+    big_test()
+    print('GPU Test passed!')
