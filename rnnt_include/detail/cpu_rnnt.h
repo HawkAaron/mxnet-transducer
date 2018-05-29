@@ -11,6 +11,7 @@
 #include <omp.h>
 #endif
 
+#include "rnnt.h"
 #include "rnnt_helper.h"
 
 template<typename ProbT>

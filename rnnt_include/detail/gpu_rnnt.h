@@ -12,6 +12,7 @@
 #include <omp.h>
 #endif
 
+#include "rnnt.h"
 #include "reduce.h"
 #include "gpu_rnnt_kernel.h"
 

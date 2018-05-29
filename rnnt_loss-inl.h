@@ -224,7 +224,6 @@ class RNNTLossProp : public OperatorProperty {
         << "The batch size for the data and data lengths must be the same.";
 
     const TShape &llshape = (*in_shape)[rnnt_loss::kLabelLength];
-    CHECK_EQ(llshape.ndim(), 1U) << "Label length array must be a vector.";
     CHECK_EQ(llshape[0], lshape[0])
         << "The batch size for the labels and label lengths must be the same.";
 
@@ -233,6 +232,34 @@ class RNNTLossProp : public OperatorProperty {
     out_shape->clear();
     out_shape->push_back(oshape);
     out_shape->push_back(dshape);  // grad output
+    return true;
+  }
+
+  bool InferType(std::vector<int> *in_type, std::vector<int> *out_type,
+                    std::vector<int> *aux_type) const override {
+    // trans_acts, pred_acts, labels, input_length, label_length
+    CHECK_LE(in_type->size(), this->ListArguments().size());
+    int n_in = this->ListArguments().size();
+    for (unsigned i = 0; i < in_type->size(); ++i) {
+        auto type = mshadow::default_type_flag;
+        if (i >= 1) type = mshadow::kInt32;
+        CHECK(in_type->at(i) == type ||
+            in_type->at(i) == -1) << "Unsupported data type " << in_type->at(i);
+    }
+    in_type->clear();
+    for (int i = 0; i < n_in; ++i ) {
+        auto type = mshadow::default_type_flag;
+        if (i >= 1) type = mshadow::kInt32;
+        in_type->push_back(type);
+    }
+
+    int n_out = this->ListOutputs().size();
+    out_type->clear();
+    for (int i = 0; i < n_out; ++i ) out_type->push_back(mshadow::default_type_flag);
+
+    int n_aux = this->ListAuxiliaryStates().size();
+    aux_type->clear();
+    for (int i = 0; i < n_aux; ++i ) aux_type->push_back(mshadow::default_type_flag);
     return true;
   }
 

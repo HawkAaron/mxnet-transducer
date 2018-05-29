@@ -36,19 +36,8 @@ struct CTAReduce {
     }
 };
 
-// TODO return 
-template <typename T>
-inline __device__ T logp(const T* ft, const T* gu, int col, int num_rows, int idx, int maxT, int maxU) {
-    int u = col % maxU;
-    int bt = (col - u) / maxU;
-    int t = bt % maxT;
-    int mb = (bt - t) / maxT;
-    return ft[(mb * maxT + t) * num_rows + idx] + gu[(mb * maxU + u) * num_rows + idx];
-}
-
 template <int NT, typename Iop, typename Rop, typename T>
-__global__ void reduce_rows(Iop f, Rop g, const T* ft, const T* gu, T* output,
-                            int num_rows, int num_cols, int maxT, int maxU) {
+__global__ void reduce_rows(Iop f, Rop g, const T* const acts, T* output, int num_rows) {
 
     typedef CTAReduce<NT, T, Rop> R;
     __shared__ typename R::Storage storage;
@@ -57,18 +46,15 @@ __global__ void reduce_rows(Iop f, Rop g, const T* ft, const T* gu, T* output,
     int idx = tid;
     int col = blockIdx.x;
     T curr;
-    T ret;
 
     // Each block works on a column
     if (idx < num_rows) {
-        ret = logp(ft, gu, col, num_rows, idx, maxT, maxU);
-        curr = f(ret);
+        curr = f(acts[col * num_rows + idx]);
     }
     idx += NT;
 
     while (idx < num_rows) {
-        ret = logp(ft, gu, col, num_rows, idx, maxT, maxU);
-        curr = g(curr, f(ret));
+        curr = g(curr, f(acts[col * num_rows + idx]));
         idx += NT;
     }
 
@@ -81,8 +67,7 @@ __global__ void reduce_rows(Iop f, Rop g, const T* ft, const T* gu, T* output,
 }
 
 template <int NT, typename Iop, typename Rop, typename T>
-__global__ void reduce_minus(Iop f, Rop g, const T* ft, const T* gu, T* output,
-                            int num_rows, int num_cols, int maxT, int maxU) {
+__global__ void reduce_minus(Iop f, Rop g, const T* const acts, T* output, int num_rows) {
 
     typedef CTAReduce<NT, T, Rop> R;
     __shared__ typename R::Storage storage;
@@ -91,19 +76,16 @@ __global__ void reduce_minus(Iop f, Rop g, const T* ft, const T* gu, T* output,
     int idx = tid;
     int col = blockIdx.x;
     T curr;
-    T ret;
     T max = output[col];
 
     // Each block works on a column
     if (idx < num_rows) {
-        ret = logp(ft, gu, col, num_rows, idx, maxT, maxU);
-        curr = f(ret - max);
+        curr = f(acts[col * num_rows + idx] - max);
     }
     idx += NT;
 
     while (idx < num_rows) {
-        ret = logp(ft, gu, col, num_rows, idx, maxT, maxU);
-        curr = g(curr, f(ret - max));
+        curr = g(curr, f(acts[col * num_rows + idx] - max));
         idx += NT;
     }
 
@@ -118,27 +100,27 @@ __global__ void reduce_minus(Iop f, Rop g, const T* ft, const T* gu, T* output,
 struct ReduceHelper {
 
     template<typename T, typename Iof, typename Rof>
-    static void impl(Iof f, Rof g, const T* ft, const T* gu, T* output, int num_rows, int num_cols, int maxT, int maxU, bool minus, cudaStream_t stream) {
+    static void impl(Iof f, Rof g, const T* const acts, T* output, int num_rows, int num_cols, bool minus, cudaStream_t stream) {
 
         int grid_size;
 
         if (minus) {
             grid_size = num_cols;
             reduce_minus<128><<<grid_size, 128, 0, stream>>>
-               (f, g, ft, gu, output, num_rows, num_cols, maxT, maxU);
+               (f, g, acts, output, num_rows);
 
         } else {
             grid_size = num_cols;
             reduce_rows<128><<<grid_size, 128, 0, stream>>>
-               (f, g, ft, gu, output, num_rows, num_cols, maxT, maxU);
+               (f, g, acts, output, num_rows);
         }
     }
 };
 
 
 template<typename T, typename Iof, typename  Rof>
-rnntStatus_t reduce(Iof f, Rof g, const T* ft, const T* gu, T* output, int rows, int cols, int maxT, int maxU, bool minus, cudaStream_t stream) {
-    ReduceHelper::impl(f, g, ft, gu, output, rows, cols, maxT, maxU, minus, stream);
+rnntStatus_t reduce(Iof f, Rof g, const T* const acts, T* output, int rows, int cols, bool minus, cudaStream_t stream) {
+    ReduceHelper::impl(f, g, acts, output, rows, cols, minus, stream);
     cudaStreamSynchronize(stream);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess)
@@ -147,10 +129,10 @@ rnntStatus_t reduce(Iof f, Rof g, const T* ft, const T* gu, T* output, int rows,
     return RNNT_STATUS_SUCCESS;
 }
 
-rnntStatus_t reduce_exp(const float *ft, const float* gu, float *denom, int rows, int cols, int maxT, int maxU, bool minus, cudaStream_t stream) {
-    return reduce(rnnt_helper::exponential<float>(), rnnt_helper::add<float>(), ft, gu, denom, rows, cols, maxT, maxU, minus, stream);
+rnntStatus_t reduce_exp(const float* const acts, float *denom, int rows, int cols, bool minus, cudaStream_t stream) {
+    return reduce(rnnt_helper::exponential<float>(), rnnt_helper::add<float>(), acts, denom, rows, cols, minus, stream);
 }
 
-rnntStatus_t reduce_max(const float *ft, const float* gu, float *denom, int rows, int cols, int maxT, int maxU, bool minus, cudaStream_t stream) {
-    return reduce(rnnt_helper::identity<float>(), rnnt_helper::maximum<float>(), ft, gu, denom, rows, cols, maxT, maxU, minus, stream);
+rnntStatus_t reduce_max(const float* const acts, float *denom, int rows, int cols, bool minus, cudaStream_t stream) {
+    return reduce(rnnt_helper::identity<float>(), rnnt_helper::maximum<float>(), acts, denom, rows, cols, minus, stream);
 }
