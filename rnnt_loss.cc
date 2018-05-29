@@ -30,20 +30,20 @@
 namespace mshadow {
 
 template <typename DType>
-void compute_rnnt_cost(const Tensor<cpu, 4, DType> activations, // BTUV
+void compute_rnnt_cost(const Tensor<cpu, 4, DType> acts, // BTUV
                              DType *costs, DType *grads, int *labels,
                              int *label_lengths, int *data_lengths,
                              void *workspace, int train, int blank_label) {
-  int maxT = static_cast<int>(activations.size(0));
-  int maxU = static_cast<int>(activations.size(1));
-  int minibatch = static_cast<int>(activations.size(2));
-  int alphabet_size = static_cast<int>(activations.size(3));
+  int minibatch = static_cast<int>(acts.size(0));
+  int maxT = static_cast<int>(acts.size(1));
+  int maxU = static_cast<int>(acts.size(2));
+  int alphabet_size = static_cast<int>(acts.size(3));
 
   CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
   if (train) {
-    rnnt.cost_and_grad(activations.dptr_, grads, costs, labels, label_lengths, data_lengths);
+    rnnt.cost_and_grad(acts.dptr_, grads, costs, labels, label_lengths, data_lengths);
   } else {
-    rnnt.score_forward(activations.dptr_, costs, labels, label_lengths, data_lengths);
+    rnnt.score_forward(acts.dptr_, costs, labels, label_lengths, data_lengths);
   }
 }
 
