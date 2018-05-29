@@ -91,10 +91,10 @@ GpuRNNT<ProbT>::compute_cost_and_score(const ProbT* const acts,
     bytes_used += sizeof(ProbT) * maxT_ * maxU_ * minibatch_;
     ProbT* betas = reinterpret_cast<ProbT*>(static_cast<char*>(gpu_workspace) + bytes_used);
     bytes_used += sizeof(ProbT) * maxT_ * maxU_ * minibatch_;
-    // logllh
-    ProbT* llForward = reinterpret_cast<ProbT*>(static_cast<char*>(gpu_workspace) + bytes_used);
+    // negtive log likelihood
+    ProbT* nllForward = reinterpret_cast<ProbT*>(static_cast<char*>(gpu_workspace) + bytes_used);
     bytes_used += sizeof(ProbT) * minibatch_;
-    ProbT* llBackward = reinterpret_cast<ProbT*>(static_cast<char*>(gpu_workspace) + bytes_used);
+    ProbT* nllBackward = reinterpret_cast<ProbT*>(static_cast<char*>(gpu_workspace) + bytes_used);
     bytes_used += sizeof(ProbT) * minibatch_;
 
     if (training) {
@@ -109,7 +109,7 @@ GpuRNNT<ProbT>::compute_cost_and_score(const ProbT* const acts,
     // std::cout << "log_softmax " << elapsed.count() * 1000 << " ms\n";
     // alphas
     // start = std::chrono::high_resolution_clock::now();
-    compute_alphas_kernel<ProbT><<<1, minibatch_, 0, stream_>>>(acts, denom, alphas, llForward, 
+    compute_alphas_kernel<ProbT><<<1, minibatch_, 0, stream_>>>(acts, denom, alphas, nllForward, 
         input_lengths, label_lengths, labels, minibatch_, maxT_, maxU_, alphabet_size_, blank_);
     // cudaStreamSynchronize(stream_);
     // end = std::chrono::high_resolution_clock::now();
@@ -118,7 +118,7 @@ GpuRNNT<ProbT>::compute_cost_and_score(const ProbT* const acts,
     if (training) {
         // betas
         // start = std::chrono::high_resolution_clock::now();
-        compute_betas_kernel<ProbT><<<1, minibatch_, 0, stream_>>>(acts, denom, betas, llBackward,
+        compute_betas_kernel<ProbT><<<1, minibatch_, 0, stream_>>>(acts, denom, betas, nllBackward,
             input_lengths, label_lengths, labels, minibatch_, maxT_, maxU_, alphabet_size_, blank_);
         // cudaStreamSynchronize(stream_);
         // end = std::chrono::high_resolution_clock::now();
@@ -127,7 +127,7 @@ GpuRNNT<ProbT>::compute_cost_and_score(const ProbT* const acts,
         // gradient
         // start = std::chrono::high_resolution_clock::now();
         compute_grad_kernel<128, ProbT><<<minibatch_ * maxT_ * maxU_, 128, 0, stream_>>>(grads, 
-            acts, denom, alphas, betas, llForward, input_lengths, label_lengths, labels, 
+            acts, denom, alphas, betas, nllForward, input_lengths, label_lengths, labels, 
             minibatch_, maxT_, maxU_, alphabet_size_, blank_);
         // cudaStreamSynchronize(stream_);
         // end = std::chrono::high_resolution_clock::now();
@@ -135,13 +135,9 @@ GpuRNNT<ProbT>::compute_cost_and_score(const ProbT* const acts,
         // std::cout << "compute_grad_kernel " << elapsed.count() * 1000 << " ms\n";
     }
     // cost
-    cudaMemcpyAsync(costs, llForward, sizeof(ProbT) * minibatch_, cudaMemcpyDeviceToHost, stream_);
+    cudaMemcpyAsync(costs, nllForward, sizeof(ProbT) * minibatch_, cudaMemcpyDeviceToDevice, stream_);
     cudaStreamSynchronize(stream_);
-    // printf("costs\n");
-    for (int mb = 0; mb < minibatch_; ++mb) {
-        costs[mb] = -costs[mb];
-        // printf("%f ", costs[mb]);
-    }
+
     return RNNT_STATUS_SUCCESS;
 }
 

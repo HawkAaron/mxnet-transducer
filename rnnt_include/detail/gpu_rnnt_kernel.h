@@ -9,7 +9,7 @@ inline __device__ T logp(const T* const denom, const T* const acts, const int ma
 }
 
 template<typename Tp>
-__global__ void compute_alphas_kernel(const Tp* const acts, const Tp* const denom, Tp* alphas, Tp* llForward, const int* const xlen, const int* const ylen, 
+__global__ void compute_alphas_kernel(const Tp* const acts, const Tp* const denom, Tp* alphas, Tp* nllForward, const int* const xlen, const int* const ylen, 
     const int* const mlabels, const int minibatch, const int maxT, const int maxU, const int alphabet_size, const int blank_) {
     int tid = threadIdx.x; // mb
     const int T = xlen[tid];
@@ -34,12 +34,12 @@ __global__ void compute_alphas_kernel(const Tp* const acts, const Tp* const deno
     }
 
     Tp loglike = alphas[(T-1) * maxU + U-1] + logp(denom, acts, maxT, maxU, alphabet_size, tid, T-1, U-1, blank_);
-    llForward[tid] = loglike;
+    nllForward[tid] = -loglike;
     __syncthreads();
 }
 
 template<typename Tp>
-__global__ void compute_betas_kernel(const Tp* const acts, const Tp* const denom, Tp* betas, Tp* llBackward, const int* const xlen, const int* const ylen, 
+__global__ void compute_betas_kernel(const Tp* const acts, const Tp* const denom, Tp* betas, Tp* nllBackward, const int* const xlen, const int* const ylen, 
     const int* const mlabels, const int minibatch, const int maxT, const int maxU, const int alphabet_size, const int blank_) {
     int tid = threadIdx.x; // mb
     const int T = xlen[tid];
@@ -63,12 +63,12 @@ __global__ void compute_betas_kernel(const Tp* const acts, const Tp* const denom
         }
     }
 
-    llBackward[tid] = betas[0];
+    nllBackward[tid] = -betas[0];
     __syncthreads();
 }
 
 template<int NT, typename Tp>
-__global__ void compute_grad_kernel(Tp* grads, const Tp* const acts, const Tp* const denom, const Tp* const alphas, const Tp* const betas, const Tp* const logll, const int* const xlen, const int* const ylen, 
+__global__ void compute_grad_kernel(Tp* grads, const Tp* const acts, const Tp* const denom, const Tp* const alphas, const Tp* const betas, const Tp* const nll, const int* const xlen, const int* const ylen, 
     const int* const mlabels, const int minibatch, const int maxT, const int maxU, const int alphabet_size, const int blank_) {
     int tid = threadIdx.x; // alphabet dim
     int idx = tid;
@@ -86,15 +86,14 @@ __global__ void compute_grad_kernel(Tp* grads, const Tp* const acts, const Tp* c
     if (t < T && u < U) {
         while (idx < alphabet_size) {
             Tp logpk = denom[col] + acts[col * alphabet_size + idx];
-            // Tp logpk = logp(denom, acts, maxT, maxU, alphabet_size, mb, t, u, idx);
-            Tp grad = exp(alphas[col] + betas[col] + logpk - logll[mb]);
+            Tp grad = exp(alphas[col] + betas[col] + logpk + nll[mb]);
             // grad to last blank transition
             if (idx == blank_ && t == T-1 && u == U-1) grad -= 1;
             if (idx == blank_ && t < T-1) {
-                grad -= exp(alphas[col] + logpk - logll[mb] + betas[col + maxU]);
+                grad -= exp(alphas[col] + logpk + nll[mb] + betas[col + maxU]);
             }
             if (idx == labels[u] && u < U-1) {
-                grad -= exp(alphas[col] + logpk - logll[mb] + betas[col+1]);
+                grad -= exp(alphas[col] + logpk + nll[mb] + betas[col+1]);
             }
             grads[col * alphabet_size + idx] = grad;
 
