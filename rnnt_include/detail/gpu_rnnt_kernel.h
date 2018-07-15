@@ -2,6 +2,8 @@
 
 #include "rnnt_helper.h"
 
+namespace warp_rnnt {
+
 template<typename T>
 inline __device__ T logp(const T* const denom, const T* const trans_acts, const T* const pred_acts, const int maxT, const int maxU, const int alphabet_size, int mb, int t, int u, int v) {
     return denom[(mb * maxT + t) * maxU + u] + trans_acts[(mb * maxT + t) * alphabet_size + v] + pred_acts[(mb * maxU + u) * alphabet_size + v];
@@ -102,3 +104,5 @@ __global__ void compute_grad_kernel(Tp* const trans_grad, Tp* const pred_grad, c
     }
     __syncthreads();
 }
+
+} // warp_rnnt

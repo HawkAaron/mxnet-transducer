@@ -41,7 +41,7 @@ void compute_rnnt_cost(const Tensor<gpu, 3, DType> trans_acts,
   int alphabet_size = static_cast<int>(trans_acts.size(2));
   int maxU = static_cast<int>(pred_acts.size(1));
 
-  GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, 
+  warp_rnnt::GpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, 
                     blank_label, trans_acts.stream_->stream_);
   if (train) {
     rnnt.cost_and_grad(trans_acts.dptr_, pred_acts.dptr_, 

@@ -12,6 +12,8 @@
 #include "reduce.h"
 #include "gpu_rnnt_kernel.h"
 
+namespace warp_rnnt {
+
 template<typename ProbT>
 class GpuRNNT {
 public:
@@ -190,3 +192,5 @@ GpuRNNT<ProbT>::score_forward(ProbT* const trans_acts,
     return compute_cost_and_score(trans_acts, pred_acts, nullptr, nullptr, 
                                 costs, pad_labels, label_lengths, input_lengths);
 }
+
+} // warp_rnnt
