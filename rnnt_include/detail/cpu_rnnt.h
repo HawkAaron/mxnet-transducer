@@ -14,6 +14,8 @@
 #include "rnnt.h"
 #include "rnnt_helper.h"
 
+namespace warp_rnnt {
+
 template<typename ProbT>
 class CpuRNNT {
 public:
@@ -302,3 +304,5 @@ CpuRNNT<ProbT>::score_forward(const ProbT* const log_probs,
 
     return RNNT_STATUS_SUCCESS;
 }
+
+} // warp_rnnt

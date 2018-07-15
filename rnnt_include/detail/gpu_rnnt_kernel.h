@@ -2,6 +2,8 @@
 
 #include "rnnt_helper.h"
 
+namespace warp_rnnt {
+
 template<typename T>
 inline __device__ T logp(const T* const denom, const T* const acts, const int maxT, const int maxU, const int alphabet_size, int mb, int t, int u, int v) {
     const int col = (mb * maxT + t) * maxU + u;
@@ -102,3 +104,5 @@ __global__ void compute_grad_kernel(Tp* grads, const Tp* const acts, const Tp* c
     }
     __syncthreads();
 }
+
+} // warp_rnnt

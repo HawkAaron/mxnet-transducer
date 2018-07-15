@@ -1,5 +1,7 @@
 #include "rnnt_helper.h"
 
+namespace warp_rnnt {
+
 const int warp_size = 32;
 
 template<int NT, typename T, typename Rop>
@@ -136,3 +138,5 @@ rnntStatus_t reduce_exp(const float* const acts, float *denom, int rows, int col
 rnntStatus_t reduce_max(const float* const acts, float *denom, int rows, int cols, bool minus, cudaStream_t stream) {
     return reduce(rnnt_helper::identity<float>(), rnnt_helper::maximum<float>(), acts, denom, rows, cols, minus, stream);
 }
+
+} // warp_rnnt

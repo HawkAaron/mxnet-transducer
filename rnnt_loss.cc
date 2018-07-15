@@ -39,7 +39,7 @@ void compute_rnnt_cost(const Tensor<cpu, 4, DType> acts, // BTUV
   int maxU = static_cast<int>(acts.size(2));
   int alphabet_size = static_cast<int>(acts.size(3));
 
-  CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
+  warp_rnnt::CpuRNNT<DType> rnnt(minibatch, maxT, maxU, alphabet_size, workspace, blank_label);
   if (train) {
     rnnt.cost_and_grad(acts.dptr_, grads, costs, labels, label_lengths, data_lengths);
   } else {
