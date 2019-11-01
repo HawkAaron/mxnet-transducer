@@ -45,7 +45,7 @@ class RNNTLoss(Loss):
 From the repo test with:
 
 ```bash
-python test/test.py 10 300 100 50 --mx
+python test/test.py --mx
 ```
 
 ## Reference
