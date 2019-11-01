@@ -227,7 +227,7 @@ class RNNTLossProp : public OperatorProperty {
     CHECK_EQ(llshape[0], lshape[0])
         << "The batch size for the labels and label lengths must be the same.";
 
-    TShape oshape(1);
+    TShape oshape(1, 1);
     oshape[0] = dshape[0];  // batch size
     out_shape->clear();
     out_shape->push_back(oshape);
